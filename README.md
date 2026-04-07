@@ -1,3 +1,13 @@
+---
+title: Algo Reasoning Environment
+emoji: 🧠
+colorFrom: yellow
+colorTo: gray
+sdk: docker
+app_file: app.py
+pinned: false
+---
+
 # Algo Reasoning Environment
 
 An OpenEnv-compatible environment that evaluates AI agents on their ability to solve LeetCode-style problems in Rust, providing accurate reasoning and time complexity analysis.
