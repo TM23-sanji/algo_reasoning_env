@@ -31,6 +31,6 @@ COPY app.py .
 # Expose port (HF Spaces uses 7860 by default)
 EXPOSE 7860
 
-# Run the server
-# HF Spaces automatically starts containers with: python app.py
-CMD ["python", "app.py"]
+# Run the server with a single worker to ensure in-memory session state
+# is shared across all HTTP requests within the same process
+CMD ["uvicorn", "algo_reasoning_env.server.app:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]

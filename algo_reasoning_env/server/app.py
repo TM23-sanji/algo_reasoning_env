@@ -2,7 +2,7 @@
 FastAPI application for the Algo Reasoning Environment.
 
 This module creates an HTTP server that exposes the AlgoReasoningEnvironment
-over HTTP and WebSocket endpoints, compatible with EnvClient.
+over HTTP endpoints with session-based state management.
 
 Endpoints:
     - GET /: Interactive landing page explaining the environment
@@ -10,47 +10,267 @@ Endpoints:
     - POST /step: Evaluate an agent's submission
     - GET /state: Get current environment state
     - GET /health: Health check
+    - POST /evaluate: Combined reset+step in a single request
 
 Usage:
     # Development:
-    uvicorn server.app:app --reload --host 0.0.0.0 --port 7860
+    uvicorn algo_reasoning_env.server.app:app --reload --host 0.0.0.0 --port 7860
 
-    # Production:
-    uvicorn server.app:app --host 0.0.0.0 --port 7860 --workers 4
+    # Production (single worker for session state):
+    uvicorn algo_reasoning_env.server.app:app --host 0.0.0.0 --port 7860 --workers 1
 """
 
-try:
-    from openenv.core.env_server.http_server import create_app as create_openenv_app
-    from openenv.core.env_server.types import ServerMode
-except ImportError as e:
-    raise ImportError(
-        "openenv is required for the web interface. "
-        "Install dependencies with 'pip install openenv>=0.1.0'."
-    ) from e
+import os
+from typing import Any, Dict, Optional
 
-from starlette.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
 
 from algo_reasoning_env import (
     AlgoReasoningAction,
     AlgoReasoningObservation,
-    AlgoReasoningEnvironment,
+)
+from .session_store import create_session, get_session, delete_session, session_count
+
+
+# ---------------------------------------------------------------------------
+# Request / Response models
+# ---------------------------------------------------------------------------
+
+
+class ResetRequest(BaseModel):
+    """Request body for /reset."""
+
+    seed: Optional[int] = Field(default=None, description="Random seed (unused)")
+    episode_id: Optional[str] = Field(default=None, max_length=255)
+
+
+class StepRequestBody(BaseModel):
+    """Action payload nested inside /step request."""
+
+    solution_code: str = Field(..., description="Rust impl Solution block")
+    reasoning_steps: str = Field(
+        ..., description="Step-by-step reasoning (step-1, step-2, etc.)"
+    )
+    time_complexity: str = Field(
+        ..., description="Time complexity, e.g. O(n) or O(n^2)"
+    )
+
+
+class StepRequest(BaseModel):
+    """Request body for /step."""
+
+    session_id: str = Field(..., description="Returned by /reset")
+    action: StepRequestBody = Field(..., description="Agent submission")
+
+
+class EvaluateRequest(BaseModel):
+    """Request body for /evaluate (stateless combined reset+step)."""
+
+    solution_code: str = Field(..., description="Rust impl Solution block")
+    reasoning_steps: str = Field(
+        ..., description="Step-by-step reasoning (step-1, step-2, etc.)"
+    )
+    time_complexity: str = Field(
+        ..., description="Time complexity, e.g. O(n) or O(n^2)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _obs_to_dict(obs: AlgoReasoningObservation) -> Dict[str, Any]:
+    """Serialize an observation to a plain dict for JSON response."""
+    d: Dict[str, Any] = {
+        "problem_id": obs.problem_id,
+        "task_id": obs.task_id,
+        "difficulty": obs.difficulty,
+        "problem_description": obs.problem_description,
+        "starter_code": obs.starter_code,
+        "expected_complexity": obs.expected_complexity,
+        "ground_truth_explanation": obs.ground_truth_explanation,
+        "tags": obs.tags,
+        "test_harness": obs.test_harness,
+        "done": obs.done,
+        "reward": obs.reward,
+    }
+    if obs.reasoning_score is not None:
+        d["reasoning_score"] = obs.reasoning_score
+    if obs.complexity_score is not None:
+        d["complexity_score"] = obs.complexity_score
+    if obs.correctness_reward is not None:
+        d["correctness_reward"] = obs.correctness_reward
+    if obs.evaluation is not None:
+        ev = obs.evaluation
+        d["evaluation"] = {
+            "reasoning_score": ev.reasoning_score,
+            "complexity_score": ev.complexity_score,
+            "correctness_reward": ev.correctness_reward,
+            "predicted_complexity": ev.predicted_complexity,
+            "compilation_error": ev.compilation_error,
+            "test_output": ev.test_output,
+        }
+    return d
+
+
+# ---------------------------------------------------------------------------
+# FastAPI application
+# ---------------------------------------------------------------------------
+
+app = FastAPI(
+    title="Algo Reasoning Environment",
+    version="1.0.0",
+    description=(
+        "OpenEnv-compatible environment for evaluating AI agents on "
+        "Rust code correctness, reasoning quality, and time complexity."
+    ),
 )
 
 
-# Create the FastAPI app
-app = create_openenv_app(
-    env=AlgoReasoningEnvironment,
-    action_cls=AlgoReasoningAction,
-    observation_cls=AlgoReasoningObservation,
-    env_name="algo_reasoning_env",
-    max_concurrent_envs=1,
-)
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 
 @app.get("/", include_in_schema=False)
 async def root() -> HTMLResponse:
     """Landing page explaining how the environment works."""
-    html = """<!DOCTYPE html>
+    html = _LANDING_HTML
+    return HTMLResponse(content=html)
+
+
+@app.get("/health", tags=["Health"])
+async def health() -> Dict[str, Any]:
+    """Health check endpoint."""
+    return {
+        "status": "ok",
+        "active_sessions": session_count(),
+    }
+
+
+@app.post("/reset", tags=["Environment Control"])
+async def reset(request: ResetRequest = None) -> Dict[str, Any]:
+    """
+    Reset the environment and return the first problem observation.
+
+    Creates a new session. The caller must store the returned ``session_id``
+    and pass it to ``/step``.
+    """
+    data_dir = os.getenv("DATA_DIR", "/data")
+    api_key = os.getenv("LIGHTNING_API_KEY")
+
+    try:
+        session_id, env = create_session(data_dir=data_dir, api_key=api_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create session: {e}")
+
+    try:
+        obs = env.reset()
+    except Exception as e:
+        delete_session(session_id)
+        raise HTTPException(status_code=500, detail=f"Reset failed: {e}")
+
+    return {
+        "session_id": session_id,
+        "observation": _obs_to_dict(obs),
+        "reward": None,
+        "done": False,
+    }
+
+
+@app.post("/step", tags=["Environment Control"])
+async def step(request: StepRequest) -> Dict[str, Any]:
+    """
+    Evaluate an agent's submission.
+
+    Requires the ``session_id`` returned by ``/reset``.
+    The action is nested under the ``action`` key.
+    """
+    try:
+        env = get_session(request.session_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    # Build the typed action
+    action = AlgoReasoningAction(
+        solution_code=request.action.solution_code,
+        reasoning_steps=request.action.reasoning_steps,
+        time_complexity=request.action.time_complexity,
+    )
+
+    try:
+        obs = env.step(action)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Step failed: {e}")
+
+    response: Dict[str, Any] = {
+        "observation": _obs_to_dict(obs),
+        "reward": obs.reward,
+        "done": obs.done,
+    }
+
+    # Clean up session after episode is done
+    if obs.done:
+        delete_session(request.session_id)
+
+    return response
+
+
+@app.get("/state", tags=["Environment Control"])
+async def state() -> Dict[str, Any]:
+    """Return environment metadata and current state."""
+    return {
+        "active_sessions": session_count(),
+        "num_problems": None,  # Unknown without an active session
+    }
+
+
+@app.post("/evaluate", tags=["Environment Control"])
+async def evaluate(request: EvaluateRequest) -> Dict[str, Any]:
+    """
+    Stateless combined reset+step in a single request.
+
+    Creates a temporary session, loads the next problem, evaluates the
+    submission, and returns the result. No ``session_id`` is needed.
+    """
+    data_dir = os.getenv("DATA_DIR", "/data")
+    api_key = os.getenv("LIGHTNING_API_KEY")
+
+    try:
+        session_id, env = create_session(data_dir=data_dir, api_key=api_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create session: {e}")
+
+    try:
+        env.reset()
+
+        action = AlgoReasoningAction(
+            solution_code=request.solution_code,
+            reasoning_steps=request.reasoning_steps,
+            time_complexity=request.time_complexity,
+        )
+
+        obs = env.step(action)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {e}")
+    finally:
+        delete_session(session_id)
+
+    return {
+        "observation": _obs_to_dict(obs),
+        "reward": obs.reward,
+        "done": obs.done,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Landing page HTML
+# ---------------------------------------------------------------------------
+
+_LANDING_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -179,29 +399,43 @@ async def root() -> HTMLResponse:
 <div class="sp on" id="s0">
   <div class="step-title">reset() — episode starts</div>
   <div class="note">Server loads a Rust LeetCode problem from the dataset. The observation contains the problem description, starter code template, test harness, and expected time complexity. <strong>No complexity pattern name is ever included in the observation.</strong></div>
-  <div class="code">observation = {
-  "task_id": "two-sum",
-  "difficulty": "Easy",
-  "problem_description": "Given an array of integers nums and an integer target, ...",
-  "starter_code": "impl Solution { pub fn two_sum(...)",
-  "test_harness": "fn test_two_sum() { ... }",
-  "expected_complexity": "O(n)",
-  "ground_truth_explanation": "Use a hash map for constant-time lookup...",
-  "tags": ["array", "hash-table"],
-  "step": 0,
+  <div class="code">POST /reset
+{}
+
+Response:
+{
+  "session_id": "abc-123-...",
+  "observation": {
+    "task_id": "two-sum",
+    "difficulty": "Easy",
+    "problem_description": "Given an array of integers nums ...",
+    "starter_code": "impl Solution { pub fn two_sum(...)",
+    "test_harness": "fn test_two_sum() { ... }",
+    "expected_complexity": "O(n)",
+    "ground_truth_explanation": "Use a hash map for constant-time lookup...",
+    "tags": ["Array", "Hash Table"],
+    "done": false,
+    "reward": null
+  },
+  "reward": null,
+  "done": false
 }</div>
-  <div class="note">The agent sees only the problem description and starter code — it must infer the correct algorithm and complexity from scratch.</div>
+  <div class="note">The agent sees only the problem description and starter code — it must infer the correct algorithm and complexity from scratch. Store the <strong>session_id</strong> for the next step.</div>
 </div>
 
 <!-- STEP 2: agent forms action -->
 <div class="sp" id="s1">
   <div class="step-title">agent produces action</div>
-  <div class="note">The agent (LLM) receives the observation and must return a typed <span class="pill pill-a">action</span> with three fields — Rust solution code, step-by-step reasoning, and time complexity label.</div>
-  <div class="code">action = AlgoReasoningAction(
-  solution_code="impl Solution { pub fn two_sum(...) }",
-  reasoning_steps="step-1: Create a HashMap. step-2: Iterate and check complement.",
-  time_complexity="O(n)",
-)</div>
+  <div class="note">The agent (LLM) receives the observation and must return an <span class="pill pill-a">action</span> with three fields — Rust solution code, step-by-step reasoning, and time complexity label.</div>
+  <div class="code">POST /step
+{
+  "session_id": "abc-123-...",
+  "action": {
+    "solution_code": "impl Solution { pub fn two_sum(...) }",
+    "reasoning_steps": "step-1: Create a HashMap. step-2: Iterate and check complement.",
+    "time_complexity": "O(n)"
+  }
+}</div>
   <div class="note">The <strong>reasoning_steps field</strong> is evaluated by an LLM judge for clarity and logical coherence. The <strong>time_complexity field</strong> is matched against ground truth Big-O notation.</div>
 </div>
 
@@ -260,27 +494,31 @@ async def root() -> HTMLResponse:
 <div class="sp" id="s4">
   <div class="step-title">step() returns observation</div>
   <div class="note">The agent gets back a rich observation showing what went wrong — enough signal to self-correct on the next attempt. <strong>Problems cycle indefinitely</strong> after the dataset is exhausted.</div>
-  <div class="code">StepResult(
-  observation = {
+  <div class="code">Response:
+{
+  "observation": {
     "task_id": "two-sum",
     "problem_description": "...",
     "starter_code": "...",
-    "test_harness": "...",
     "expected_complexity": "O(n)",
-    "ground_truth_explanation": "...",
-    "last_output": [1, 2],
-    "execution_ok": True,
-    "step": 1,
-  },
-  reward = 0.83,
-  done   = False,
-  info   = {
+    "done": true,
+    "reward": 0.83,
     "correctness_reward": 1.0,
     "reasoning_score": 0.65,
     "complexity_score": 1,
-  }
-)</div>
-  <div class="note">The <strong>info dict breakdown</strong> enables RL trainers to shape auxiliary losses per component.</div>
+    "evaluation": {
+      "reasoning_score": 0.65,
+      "complexity_score": 1,
+      "correctness_reward": 1.0,
+      "predicted_complexity": "O(n)",
+      "compilation_error": null,
+      "test_output": "test result: ok. 5 passed; 0 failed"
+    }
+  },
+  "reward": 0.83,
+  "done": true
+}</div>
+  <div class="note">Session is auto-deleted after <strong>done: true</strong>. Call <strong>/reset</strong> again for the next problem.</div>
 </div>
 
 <!-- STEP 6: dataset overview -->
@@ -343,7 +581,11 @@ prevBtn.disabled = true;
 </script>
 </body>
 </html>"""
-    return HTMLResponse(content=html)
+
+
+# ---------------------------------------------------------------------------
+# Direct execution entry point
+# ---------------------------------------------------------------------------
 
 
 def main(host: str = "0.0.0.0", port: int = 7860):

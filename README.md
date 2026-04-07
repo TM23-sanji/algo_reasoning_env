@@ -130,7 +130,48 @@ uvicorn algo_reasoning_env.server.app:app --host 0.0.0.0 --port 7860
 | `API_BASE_URL` | No | LLM API base URL (default: `https://lightning.ai/api/v1/`) |
 | `MODEL_NAME` | No | LLM model name (default: `lightning-ai/gpt-oss-20b`) |
 
-### Using with OpenEnv Client
+### Using via HTTP API (curl)
+
+The server uses session-based state management. Each `/reset` creates a session and returns a `session_id` that must be passed to `/step`.
+
+```bash
+# 1. Reset — get a problem and session_id
+curl -X POST "https://your-space.hf.space/reset" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Response:
+# {"session_id": "abc-123-...", "observation": {"problem_id": 1, "task_id": "two-sum", ...}}
+
+# 2. Step — submit solution with session_id
+curl -X POST "https://your-space.hf.space/step" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "abc-123-...",
+    "action": {
+      "solution_code": "impl Solution { pub fn two_sum(nums: Vec<i32>, target: i32) -> Vec<i32> { ... } }",
+      "reasoning_steps": "step-1: Create a HashMap. step-2: Iterate and check complement.",
+      "time_complexity": "O(n)"
+    }
+  }'
+
+# Response:
+# {"observation": {...}, "reward": 0.85, "done": true}
+```
+
+There is also a stateless `/evaluate` endpoint that combines reset+step:
+
+```bash
+curl -X POST "https://your-space.hf.space/evaluate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "solution_code": "impl Solution { pub fn two_sum(...) -> Vec<i32> { ... } }",
+    "reasoning_steps": "step-1: Use hashmap for O(n) lookup.",
+    "time_complexity": "O(n)"
+  }'
+```
+
+### Using with Python (Direct)
 
 ```python
 from algo_reasoning_env import AlgoReasoningEnvironment, AlgoReasoningAction
@@ -160,12 +201,12 @@ print(f"Reward: {result.reward}")
 ### Build the Docker Image
 
 ```bash
-# Build from algo_reasoning_env/server/
-cd algo_reasoning_env/server
+# Build from root (for HF Spaces)
 docker build -t algo-reasoning-env .
 
-# Or build from root with Makefile
-make docker-build
+# Or build from algo_reasoning_env/server/
+cd algo_reasoning_env/server
+docker build -t algo-reasoning-env .
 ```
 
 ### Run the Container
@@ -177,9 +218,11 @@ docker run -p 7860:7860 \
   algo-reasoning-env
 ```
 
+**Note:** The server runs with `--workers 1` to ensure in-memory session state is shared across HTTP requests.
+
 ## Baseline Scores
 
-To run the baseline inference script:
+To run the baseline inference script across all 952 problems:
 
 ```bash
 # Set environment variables
@@ -187,17 +230,20 @@ export LIGHTNING_API_KEY="your_api_key"
 export API_BASE_URL="https://lightning.ai/api/v1/"
 export MODEL_NAME="lightning-ai/gpt-oss-20b"
 
-# Run baseline
+# Run baseline (all 952 problems)
 python inference.py
+
+# Or run a subset
+python inference.py --num-problems 10
 ```
 
 Expected output format:
 ```
-[START] task=algo_reasoning env=benchmark model=gpt-oss-20b
-[STEP] step=1 action="solution=[...]" reward=0.00 done=false error=None
-[STEP] step=2 action="solution=[...]" reward=0.35 done=false error=None
-[STEP] step=3 action="solution=[...]" reward=0.85 done=true error=None
-[END] success=true steps=3 score=0.85 rewards=[0.0, 0.35, 0.85]
+[START] task=algo_reasoning env=algo_reasoning_env model=lightning-ai/gpt-oss-20b
+[STEP] step=1 action="solution=[len=120] reasoning=[step-1: Create HashMap...] complexity=[O(n)]" reward=+0.85 done=True error=None
+[STEP] step=2 action="solution=[len=95] reasoning=[step-1: Use two pointers...] complexity=[O(n)]" reward=+0.30 done=True error=None
+...
+[END] success=true steps=952 score=0.4500 rewards=[0.85, 0.30, ...]
 ```
 
 ## Validation
@@ -206,7 +252,7 @@ To validate the submission:
 
 ```bash
 # Start the server in another terminal
-uvicorn algo_reasoning_env.server.app:app --port 7860
+uvicorn algo_reasoning_env.server.app:app --host 0.0.0.0 --port 7860
 
 # Run validation
 chmod +x validate-submission.sh
@@ -229,12 +275,13 @@ The environment expects the following files in the data directory:
 
 ## API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/reset` | POST | Reset environment and get new problem |
-| `/step` | POST | Evaluate agent submission |
-| `/state` | GET | Get current environment state |
-| `/health` | GET | Health check |
+| Endpoint | Method | Description | Request Body |
+|----------|--------|-------------|--------------|
+| `/reset` | POST | Reset environment, get new problem + `session_id` | `{}` or `{"seed": 42}` |
+| `/step` | POST | Evaluate agent submission (requires `session_id`) | `{"session_id": "...", "action": {"solution_code": "...", "reasoning_steps": "...", "time_complexity": "..."}}` |
+| `/evaluate` | POST | Stateless combined reset+step | `{"solution_code": "...", "reasoning_steps": "...", "time_complexity": "..."}` |
+| `/state` | GET | Get server state (active sessions) | — |
+| `/health` | GET | Health check | — |
 
 ## License
 
