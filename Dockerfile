@@ -19,9 +19,8 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install the algo_reasoning_env package in editable mode
+# Install the algo_reasoning_env package
 COPY algo_reasoning_env/ /app/algo_reasoning_env/
-RUN pip install --no-cache-dir -e /app/algo_reasoning_env
 
 # Copy dataset files to /data/
 COPY complexity_reasoning_data/ /data/

@@ -10,13 +10,11 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 # Set working directory
 WORKDIR /app
 
-# Copy dataset files (should be mounted or copied at build time)
+# Copy environment code (includes README.md for pyproject.toml readme field)
+COPY algo_reasoning_env/ /app/algo_reasoning_env/
 COPY complexity_reasoning_data/ /data/
 
-# Copy environment code
-COPY algo_reasoning_env/ /app/algo_reasoning_env/
-
-# Install Python dependencies
+# Install Python dependencies via pyproject.toml
 RUN pip install --no-cache-dir -e /app/algo_reasoning_env
 
 # Expose port
