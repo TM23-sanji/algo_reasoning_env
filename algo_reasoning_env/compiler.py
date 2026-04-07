@@ -198,6 +198,9 @@ def assemble_code(
     # Combine starter code with solution
     if "// OUR CODE GOES HERE" in starter_code:
         assembled = starter_code.replace("// OUR CODE GOES HERE", code_body)
+        # Ensure struct Solution; is present before impl Solution
+        if "struct Solution" not in assembled:
+            assembled = "struct Solution;\n\n" + assembled
     else:
         assembled = f"{headers}struct Solution;\n\n{code_body}"
 
