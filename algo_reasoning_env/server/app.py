@@ -44,6 +44,10 @@ class ResetRequest(BaseModel):
 
     seed: Optional[int] = Field(default=None, description="Random seed (unused)")
     episode_id: Optional[str] = Field(default=None, max_length=255)
+    problem_id: Optional[int] = Field(
+        default=None,
+        description="Specific problem ID to load. If omitted, loads next in sequence.",
+    )
 
 
 class StepRequestBody(BaseModel):
@@ -158,6 +162,9 @@ async def reset(request: ResetRequest = None) -> Dict[str, Any]:
 
     Creates a new session. The caller must store the returned ``session_id``
     and pass it to ``/step``.
+
+    Pass ``problem_id`` to load a specific problem, or omit it to load
+    the next problem in sequence.
     """
     data_dir = os.getenv("DATA_DIR", "/data")
     api_key = os.getenv("LIGHTNING_API_KEY")
@@ -168,7 +175,8 @@ async def reset(request: ResetRequest = None) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to create session: {e}")
 
     try:
-        obs = env.reset()
+        problem_id = request.problem_id if request else None
+        obs = env.reset(problem_id=problem_id)
     except Exception as e:
         delete_session(session_id)
         raise HTTPException(status_code=500, detail=f"Reset failed: {e}")

@@ -85,6 +85,7 @@ class AlgoReasoningEnvironment(Environment):
         self,
         seed: Optional[int] = None,
         episode_id: Optional[str] = None,
+        problem_id: Optional[int] = None,
         **kwargs: Any,
     ) -> AlgoReasoningObservation:
         """
@@ -93,6 +94,8 @@ class AlgoReasoningEnvironment(Environment):
         Args:
             seed: Optional seed for reproducibility (not used)
             episode_id: Optional episode ID for tracking
+            problem_id: Optional specific problem ID to load.
+                        If not provided, loads the next problem in sequence.
             **kwargs: Additional arguments (ignored)
 
         Returns:
@@ -107,8 +110,13 @@ class AlgoReasoningEnvironment(Environment):
             step_count=0,
         )
 
-        # Get next problem
-        problem = self._data_loader.get_next()
+        # Get problem — either by ID or next in sequence
+        if problem_id is not None:
+            problem = self._data_loader.get_problem_by_id(problem_id)
+            if problem is None:
+                raise RuntimeError(f"Problem {problem_id} not found in dataset")
+        else:
+            problem = self._data_loader.get_next()
 
         if problem is None:
             raise RuntimeError("No problems available in dataset")

@@ -58,6 +58,7 @@ class DataLoader:
         """
         self.data_dir = Path(data_dir)
         self._problems: List[Problem] = []
+        self._problems_by_id: Dict[int, Problem] = {}
         self._starter_codes: Dict[int, StarterCode] = {}
         self._test_harnesses: Dict[int, TestHarness] = {}
         self._current_index = 0
@@ -71,7 +72,9 @@ class DataLoader:
             with open(dataset_path) as f:
                 for line in f:
                     data = json.loads(line)
-                    self._problems.append(Problem(data))
+                    problem = Problem(data)
+                    self._problems.append(problem)
+                    self._problems_by_id[problem.problem_id] = problem
             # Sort by problem_id for consistent ordering
             self._problems.sort(key=lambda p: p.problem_id)
 
@@ -106,6 +109,18 @@ class DataLoader:
         if 0 <= index < len(self._problems):
             return self._problems[index]
         return None
+
+    def get_problem_by_id(self, problem_id: int) -> Optional[Problem]:
+        """
+        Get problem by its problem_id.
+
+        Args:
+            problem_id: The problem ID to look up
+
+        Returns:
+            Problem with matching ID, or None if not found
+        """
+        return self._problems_by_id.get(problem_id)
 
     def get_next(self) -> Optional[Problem]:
         """

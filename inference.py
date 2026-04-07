@@ -1,40 +1,50 @@
 """
 Baseline inference script for the Algo Reasoning Environment.
 
-This script runs a baseline agent against all problems in the environment
-and logs scores in the required format for evaluation.
+Communicates with the environment via HTTP (HF Space endpoints) and
+logs scores in the strict [START] / [STEP] / [END] format required
+for evaluation.
 
 Usage:
     python inference.py
     python inference.py --num-problems 10
-    python inference.py --api-url https://api.example.com --model my-model
+    python inference.py --output results.jsonl
 
 Required environment variables:
-    API_BASE_URL: The API endpoint for the LLM
-    MODEL_NAME: The model identifier to use
-    HF_TOKEN: Your HuggingFace API key (if needed)
-    LIGHTNING_API_KEY: API key for Lightning AI
+    API_BASE_URL  The API endpoint for the LLM.
+    MODEL_NAME    The model identifier to use for inference.
+    HF_TOKEN      Your HuggingFace / API key.
+    HF_SPACE_URL  The HF Space URL (defaults to the deployed space).
 """
 
 import argparse
 import json
 import os
 import re
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+import requests
 from openai import OpenAI
 
-# Environment configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "https://lightning.ai/api/v1/")
-MODEL_NAME = os.getenv("MODEL_NAME", "lightning-ai/gpt-oss-20b")
-API_KEY = os.getenv("LIGHTNING_API_KEY", "")
-HF_TOKEN = os.getenv("HF_TOKEN", "")
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
-# Benchmark configuration
+HF_SPACE_URL = os.getenv(
+    "HF_SPACE_URL",
+    "https://tm23hgf-rust-algo-reasoning.hf.space",
+)
+API_BASE_URL = os.getenv("API_BASE_URL", "https://lightning.ai/api/v1/")
+MODEL_NAME = os.getenv(
+    "MODEL_NAME", "lightning-ai/gpt-oss-20b"
+)  # lightning-ai/nvidia-nemotron-3-super-120b-a12b
+API_KEY = os.getenv("LIGHTNING_API_KEY", "") or os.getenv("HF_TOKEN", "")
+
 BENCHMARK = "algo_reasoning_env"
 TASK_NAME = "algo_reasoning"
 MAX_TOTAL_REWARD = 1.0
 SUCCESS_SCORE_THRESHOLD = 0.7
+REQUEST_TIMEOUT = 120  # seconds for HTTP calls to HF Space
 
 
 # ---------------------------------------------------------------------------
@@ -43,11 +53,6 @@ SUCCESS_SCORE_THRESHOLD = 0.7
 
 
 def log_start(task: str, env: str, model: str) -> None:
-    """
-    Log the start of a benchmark run.
-
-    Format: [START] task=<task> env=<env> model=<model>
-    """
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
@@ -58,33 +63,21 @@ def log_step(
     done: bool,
     error: Optional[str] = None,
 ) -> None:
-    """
-    Log each step of the benchmark.
-
-    Format: [STEP] step=<n> action="<action>" reward=<reward> done=<done> error=<error>
-    """
     action_preview = action[:100] + "..." if len(action) > 100 else action
-    error_str = f'error="{error}"' if error else "error=None"
+    error_val = error if error else "null"
+    done_val = str(done).lower()
     print(
-        f'[STEP] step={step} action="{action_preview}" reward={reward:+.2f} done={done} {error_str}',
+        f'[STEP] step={step} action="{action_preview}" '
+        f"reward={reward:.2f} done={done_val} error={error_val}",
         flush=True,
     )
 
 
-def log_end(
-    success: bool,
-    steps: int,
-    score: float,
-    rewards: List[float],
-) -> None:
-    """
-    Log the end of a benchmark run.
-
-    Format: [END] success=<success> steps=<n> score=<score> rewards=<rewards>
-    """
-    rewards_str = json.dumps([round(r, 4) for r in rewards])
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
-        f"[END] success={success} steps={steps} score={score:.4f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} "
+        f"score={score:.2f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -98,14 +91,8 @@ def build_prompt(
     problem_desc: str,
     starter_code: str,
     expected_complexity: str,
-    history: List[str],
 ) -> str:
-    """Build the prompt for the model."""
-    history_text = ""
-    if history:
-        history_text = "\n\nPrevious attempts:\n" + "\n\n".join(history)
-
-    prompt = f"""You are solving a LeetCode problem in Rust.
+    return f"""You are solving a LeetCode problem in Rust.
 
 Below is the starter code with the exact function signature.
 
@@ -115,8 +102,6 @@ Problem Description:
 {problem_desc}
 
 Expected Time Complexity: {expected_complexity}
-
-{history_text}
 
 Your task:
 1. Write the complete Rust implementation
@@ -142,7 +127,6 @@ impl Solution {{
 // O(...)
 ```
 """
-    return prompt
 
 
 # ---------------------------------------------------------------------------
@@ -150,12 +134,7 @@ impl Solution {{
 # ---------------------------------------------------------------------------
 
 
-def get_model_response(
-    client: OpenAI,
-    model: str,
-    prompt: str,
-) -> Optional[str]:
-    """Get response from the model."""
+def get_model_response(client: OpenAI, model: str, prompt: str) -> Optional[str]:
     try:
         response = client.chat.completions.create(
             model=model,
@@ -169,12 +148,12 @@ def get_model_response(
         return None
 
 
-def parse_model_response(response: str) -> tuple[str, str, str]:
+def parse_model_response(response: str) -> Tuple[str, str, str]:
     """
     Parse the model response to extract solution, reasoning, and complexity.
 
     Returns:
-        Tuple of (solution_code, reasoning_steps, time_complexity)
+        (solution_code, reasoning_steps, time_complexity)
     """
     solution_code = ""
     reasoning_steps = ""
@@ -203,7 +182,6 @@ def parse_model_response(response: str) -> tuple[str, str, str]:
     if complexity_match:
         time_complexity = complexity_match.group(1).strip()
     else:
-        # Fallback: find any O(...)
         o_match = re.search(r"(O\([^)]+\))", response)
         if o_match:
             time_complexity = o_match.group(1)
@@ -212,113 +190,199 @@ def parse_model_response(response: str) -> tuple[str, str, str]:
 
 
 # ---------------------------------------------------------------------------
+# HF Space HTTP interaction
+# ---------------------------------------------------------------------------
+
+
+def env_reset(problem_id: Optional[int] = None) -> Tuple[str, Dict]:
+    """
+    Call POST /reset on the HF Space.
+
+    Args:
+        problem_id: Optional specific problem ID to load.
+                    If not provided, loads the next problem in sequence.
+
+    Returns:
+        (session_id, observation_dict)
+    """
+    payload: Dict[str, Any] = {}
+    if problem_id is not None:
+        payload["problem_id"] = problem_id
+
+    resp = requests.post(
+        f"{HF_SPACE_URL}/reset",
+        json=payload,
+        timeout=REQUEST_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data["session_id"], data["observation"]
+
+
+def env_step(session_id: str, action: Dict) -> Dict:
+    """
+    Call POST /step on the HF Space.
+
+    Returns:
+        response dict with observation, reward, done
+    """
+    resp = requests.post(
+        f"{HF_SPACE_URL}/step",
+        json={"session_id": session_id, "action": action},
+        timeout=REQUEST_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ---------------------------------------------------------------------------
 # Main evaluation loop
 # ---------------------------------------------------------------------------
 
 
-def run_inference(num_problems: int = 952) -> None:
-    """
-    Run baseline inference across multiple problems.
-
-    Args:
-        num_problems: Number of problems to evaluate (default: 952)
-    """
-    client = OpenAI(
-        base_url=API_BASE_URL,
-        api_key=API_KEY,
-    )
-
-    # Import the environment
-    try:
-        from algo_reasoning_env import AlgoReasoningEnvironment, AlgoReasoningAction
-    except ImportError:
-        print(
-            "[ERROR] algo_reasoning_env not installed. Install with: pip install -e algo_reasoning_env"
-        )
-        return
-
-    # Initialize environment
-    env = AlgoReasoningEnvironment(
-        data_dir=os.getenv("DATA_DIR", "complexity_reasoning_data"),
-        api_key=API_KEY,
-    )
+def run_inference(num_problems: int = 952, output_path: str = "results.jsonl") -> None:
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
     all_rewards: List[float] = []
+    all_results: List[Dict[str, Any]] = []
     problems_completed = 0
-    problems_succeeded = 0
     total_score = 0.0
+    success = False
 
     log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
     try:
-        for problem_idx in range(1, num_problems + 1):
+        # Iterate through problem IDs sequentially.
+        # Some IDs may not exist in the dataset, so we skip those
+        # and continue until we complete num_problems.
+        problem_id = 1
+        step_counter = 0
+
+        while problems_completed < num_problems:
             try:
-                # Reset — get next problem
-                observation = env.reset()
+                # Reset — load specific problem by ID via HF Space
+                session_id, observation = env_reset(problem_id=problem_id)
+            except Exception:
+                # Problem ID doesn't exist in dataset — skip it
+                problem_id += 1
+                continue
 
-                problem_desc = observation.problem_description
-                starter_code = observation.starter_code
-                expected_complexity = observation.expected_complexity
+            step_counter += 1
 
-                # Build prompt
+            try:
+                problem_desc = observation.get("problem_description", "")
+                starter_code = observation.get("starter_code", "")
+                expected_complexity = observation.get("expected_complexity", "")
+
+                # Build prompt and get model response
                 prompt = build_prompt(
                     problem_desc=problem_desc,
                     starter_code=starter_code,
                     expected_complexity=expected_complexity,
-                    history=[],
                 )
 
-                # Get model response
-                model_response = get_model_response(
-                    client=client,
-                    model=MODEL_NAME,
-                    prompt=prompt,
-                )
+                model_response = get_model_response(client, MODEL_NAME, prompt)
 
                 if not model_response:
                     log_step(
-                        step=problem_idx,
+                        step=step_counter,
                         action="MODEL_FAILED",
                         reward=0.0,
                         done=True,
                         error="Model request failed",
                     )
                     all_rewards.append(0.0)
+                    all_results.append(
+                        {
+                            "problem_id": observation.get("problem_id", problem_id),
+                            "task_id": observation.get("task_id", ""),
+                            "difficulty": observation.get("difficulty", ""),
+                            "correctness_reward": 0.0,
+                            "reasoning_score": 0.0,
+                            "complexity_score": 0,
+                            "predicted_complexity": "",
+                            "ground_truth_complexity": expected_complexity,
+                            "generated_code": "",
+                            "reasoning_steps": "",
+                            "reward": 0.0,
+                            "error": "Model request failed",
+                        }
+                    )
                     problems_completed += 1
+                    problem_id += 1
                     continue
 
-                # Parse response
+                # Parse model response
                 solution_code, reasoning_steps, time_complexity = parse_model_response(
                     model_response
                 )
 
                 if not solution_code:
                     log_step(
-                        step=problem_idx,
+                        step=step_counter,
                         action="PARSE_FAILED",
                         reward=0.0,
                         done=True,
-                        error="Could not extract solution code from model response",
+                        error="Could not extract solution code",
                     )
                     all_rewards.append(0.0)
+                    all_results.append(
+                        {
+                            "problem_id": observation.get("problem_id", problem_id),
+                            "task_id": observation.get("task_id", ""),
+                            "difficulty": observation.get("difficulty", ""),
+                            "correctness_reward": 0.0,
+                            "reasoning_score": 0.0,
+                            "complexity_score": 0,
+                            "predicted_complexity": time_complexity,
+                            "ground_truth_complexity": expected_complexity,
+                            "generated_code": "",
+                            "reasoning_steps": reasoning_steps,
+                            "reward": 0.0,
+                            "error": "Could not extract solution code",
+                        }
+                    )
                     problems_completed += 1
+                    problem_id += 1
                     continue
 
-                # Create action and step
-                action = AlgoReasoningAction(
-                    solution_code=solution_code,
-                    reasoning_steps=reasoning_steps,
-                    time_complexity=time_complexity,
-                )
+                # Step — submit solution via HF Space
+                action = {
+                    "solution_code": solution_code,
+                    "reasoning_steps": reasoning_steps,
+                    "time_complexity": time_complexity,
+                }
 
-                result = env.step(action)
-                reward = result.reward or 0.0
+                result = env_step(session_id, action)
+                reward = result.get("reward", 0.0) or 0.0
+                obs = result.get("observation", {})
 
                 all_rewards.append(reward)
                 problems_completed += 1
 
-                if reward >= 0.5:
-                    problems_succeeded += 1
+                # Collect result for results.jsonl
+                all_results.append(
+                    {
+                        "problem_id": obs.get("problem_id", problem_id),
+                        "task_id": obs.get("task_id", ""),
+                        "difficulty": obs.get("difficulty", ""),
+                        "correctness_reward": obs.get("correctness_reward", 0.0),
+                        "reasoning_score": obs.get("reasoning_score", 0.0),
+                        "complexity_score": obs.get("complexity_score", 0),
+                        "predicted_complexity": (
+                            obs.get("evaluation", {}).get(
+                                "predicted_complexity", time_complexity
+                            )
+                        ),
+                        "ground_truth_complexity": obs.get(
+                            "expected_complexity", expected_complexity
+                        ),
+                        "generated_code": solution_code,
+                        "reasoning_steps": reasoning_steps,
+                        "reward": reward,
+                        "error": obs.get("evaluation", {}).get("compilation_error"),
+                    }
+                )
 
                 # Log step
                 action_str = (
@@ -327,24 +391,42 @@ def run_inference(num_problems: int = 952) -> None:
                     f"complexity=[{time_complexity}]"
                 )
                 log_step(
-                    step=problem_idx,
+                    step=step_counter,
                     action=action_str,
                     reward=reward,
                     done=True,
                     error=None,
                 )
+                problem_id += 1
 
             except Exception as e:
-                print(f"[DEBUG] Problem {problem_idx} failed: {e}", flush=True)
+                print(f"[DEBUG] Problem {problem_id} failed: {e}", flush=True)
                 all_rewards.append(0.0)
                 problems_completed += 1
+                all_results.append(
+                    {
+                        "problem_id": problem_id,
+                        "task_id": "",
+                        "difficulty": "",
+                        "correctness_reward": 0.0,
+                        "reasoning_score": 0.0,
+                        "complexity_score": 0,
+                        "predicted_complexity": "",
+                        "ground_truth_complexity": "",
+                        "generated_code": "",
+                        "reasoning_steps": "",
+                        "reward": 0.0,
+                        "error": str(e)[:200],
+                    }
+                )
                 log_step(
-                    step=problem_idx,
+                    step=step_counter,
                     action="EXCEPTION",
                     reward=0.0,
                     done=True,
                     error=str(e)[:200],
                 )
+                problem_id += 1
 
         # Calculate aggregate score
         if all_rewards:
@@ -354,10 +436,13 @@ def run_inference(num_problems: int = 952) -> None:
         success = total_score >= SUCCESS_SCORE_THRESHOLD
 
     finally:
-        try:
-            env.close()
-        except Exception as e:
-            print(f"[DEBUG] env.close() error: {e}", flush=True)
+        # Save results.jsonl
+        if all_results:
+            with open(output_path, "w") as f:
+                for result in all_results:
+                    json.dump(result, f)
+                    f.write("\n")
+            print(f"\nSaved {len(all_results)} results to {output_path}", flush=True)
 
         log_end(
             success=success,
@@ -366,17 +451,10 @@ def run_inference(num_problems: int = 952) -> None:
             rewards=all_rewards,
         )
 
-        # Summary
-        print(f"\n--- Summary ---", flush=True)
-        print(f"Problems attempted: {problems_completed}", flush=True)
-        print(f"Problems succeeded (reward >= 0.5): {problems_succeeded}", flush=True)
-        print(f"Average reward: {total_score:.4f}", flush=True)
-
 
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -400,11 +478,17 @@ if __name__ == "__main__":
         default=952,
         help="Number of problems to evaluate (default: 952)",
     )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="results.jsonl",
+        help="Output file for results (default: results.jsonl)",
+    )
     args = parser.parse_args()
 
     if args.api_url:
-        os.environ["API_BASE_URL"] = args.api_url
+        API_BASE_URL = args.api_url
     if args.model:
-        os.environ["MODEL_NAME"] = args.model
+        MODEL_NAME = args.model
 
-    run_inference(num_problems=args.num_problems)
+    run_inference(num_problems=args.num_problems, output_path=args.output)
