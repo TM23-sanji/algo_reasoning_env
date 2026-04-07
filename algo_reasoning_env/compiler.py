@@ -86,6 +86,61 @@ def strip_reasoning_comments(code: str) -> str:
     return code
 
 
+def _strip_impl_wrapper(code: str) -> str:
+    """
+    Extract just the function body from a model-generated ``impl Solution { ... }`` block.
+
+    The starter code already provides:
+        impl Solution {
+            pub fn two_sum(...) {
+                // OUR CODE GOES HERE   <-- marker is INSIDE the fn body
+            }
+        }
+
+    The model outputs a full ``impl Solution { pub fn ... { body } }`` block.
+    We need to extract only the innermost function body so it can replace
+    the marker without duplicating the fn signature or impl wrapper.
+
+    Example:
+        Input:  "impl Solution {\\n    pub fn foo() {\\n        let x = 1;\\n    }\\n}"
+        Output: "let x = 1;"
+    """
+    # First, strip the outer impl Solution { ... }
+    match = re.search(r"impl\s+Solution\s*\{", code)
+    if not match:
+        return code
+
+    start = match.end()
+    depth = 1
+    i = start
+    while i < len(code) and depth > 0:
+        if code[i] == "{":
+            depth += 1
+        elif code[i] == "}":
+            depth -= 1
+        i += 1
+
+    inner = code[start : i - 1].strip()
+
+    # Now strip the function signature + body wrapper: pub fn name(...) { ... }
+    fn_match = re.search(r"(?:pub\s+)?fn\s+\w+\s*\([^)]*\)\s*(?:->\s*\S+)?\s*\{", inner)
+    if not fn_match:
+        return inner
+
+    fn_start = fn_match.end()
+    fn_depth = 1
+    j = fn_start
+    while j < len(inner) and fn_depth > 0:
+        if inner[j] == "{":
+            fn_depth += 1
+        elif inner[j] == "}":
+            fn_depth -= 1
+        j += 1
+
+    body = inner[fn_start : j - 1].strip()
+    return body
+
+
 def transform_harness_to_test_format(harness: str) -> str:
     """
     Transform test harness from fn check() format to #[cfg(test)] format.
@@ -197,8 +252,13 @@ def assemble_code(
 
     # Combine starter code with solution
     if "// OUR CODE GOES HERE" in starter_code:
+        # Starter already provides the impl Solution wrapper.
+        # Strip the impl Solution { ... } wrapper from model output if present
+        # so we don't nest impl blocks.
+        if "impl Solution" in code_body:
+            code_body = _strip_impl_wrapper(code_body)
         assembled = starter_code.replace("// OUR CODE GOES HERE", code_body)
-        # Ensure struct Solution; is present before impl Solution
+        # Ensure struct Solution; is present (almost never in starter codes)
         if "struct Solution" not in assembled:
             assembled = "struct Solution;\n\n" + assembled
     else:
