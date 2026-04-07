@@ -10,7 +10,7 @@ This environment evaluates AI agents on their ability to:
 from typing import Optional
 
 from openenv.core.env_server.types import Action, Observation
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 
 class EvaluationResult(BaseModel):
