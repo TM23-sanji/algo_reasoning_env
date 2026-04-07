@@ -239,7 +239,7 @@ def run_inference(num_problems: int = 952) -> None:
 
     # Initialize environment
     env = AlgoReasoningEnvironment(
-        data_dir=os.getenv("DATA_DIR", "/data"),
+        data_dir=os.getenv("DATA_DIR", "complexity_reasoning_data"),
         api_key=API_KEY,
     )
 

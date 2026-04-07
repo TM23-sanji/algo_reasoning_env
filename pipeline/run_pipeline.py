@@ -28,15 +28,15 @@ from dataclasses import dataclass
 from openai import OpenAI
 
 # Import from pipeline modules
-from assembler import (
+from .assembler import (
     assemble_rust_code_v2,
     transform_harness_to_test_format,
     extract_time_complexity,
     extract_raw_time_complexity,
     extract_reasoning_steps,
 )
-from llm_judge import LLMJudge
-from config import (
+from .llm_judge import LLMJudge
+from .config import (
     LIGHTNING_BASE_URL,
     LLM_MODEL,
     GENERATION_TIMEOUT,

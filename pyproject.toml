@@ -6,5 +6,9 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "openai>=1.0.0",
+    "openenv-core",
     "python-dotenv>=1.0.0",
 ]
+
+[tool.uv.sources]
+openenv-core = { git = "https://github.com/meta-pytorch/OpenEnv.git" }
