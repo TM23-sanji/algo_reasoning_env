@@ -307,6 +307,7 @@ class TestResult:
 def compile_rust_code(
     code: str,
     timeout_seconds: int = 30,
+    tmpdir: Optional[str] = None,
 ) -> CompilationResult:
     """
     Compile Rust code using rustc.
@@ -314,41 +315,44 @@ def compile_rust_code(
     Args:
         code: Rust source code
         timeout_seconds: Compilation timeout
+        tmpdir: Directory to write source and binary into.
+                If None a new temp directory is created (caller must clean up).
 
     Returns:
         CompilationResult with success status and error if any
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
-        source_file = tmpdir / "main.rs"
-        binary_path = tmpdir / "test_runner"
+    if tmpdir is None:
+        tmpdir_path = Path(tempfile.mkdtemp())
+    else:
+        tmpdir_path = Path(tmpdir)
 
-        source_file.write_text(code)
+    source_file = tmpdir_path / "main.rs"
+    binary_path = tmpdir_path / "test_runner"
 
-        try:
-            result = subprocess.run(
-                ["rustc", "--test", "-o", str(binary_path), str(source_file)],
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-            )
+    source_file.write_text(code)
 
-            if result.returncode == 0:
-                return CompilationResult(success=True, binary_path=str(binary_path))
-            else:
-                error_msg = result.stderr or result.stdout
-                return CompilationResult(success=False, error=error_msg)
+    try:
+        result = subprocess.run(
+            ["rustc", "--test", "-o", str(binary_path), str(source_file)],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
 
-        except subprocess.TimeoutExpired:
-            return CompilationResult(
-                success=False, error="Compilation timeout exceeded"
-            )
-        except FileNotFoundError:
-            return CompilationResult(
-                success=False, error="rustc not found. Please install Rust."
-            )
-        except Exception as e:
-            return CompilationResult(success=False, error=str(e))
+        if result.returncode == 0:
+            return CompilationResult(success=True, binary_path=str(binary_path))
+        else:
+            error_msg = result.stderr or result.stdout
+            return CompilationResult(success=False, error=error_msg)
+
+    except subprocess.TimeoutExpired:
+        return CompilationResult(success=False, error="Compilation timeout exceeded")
+    except FileNotFoundError:
+        return CompilationResult(
+            success=False, error="rustc not found. Please install Rust."
+        )
+    except Exception as e:
+        return CompilationResult(success=False, error=str(e))
 
 
 def run_tests(
@@ -422,14 +426,16 @@ def evaluate_code(
     # Assemble the complete code
     assembled = assemble_code(solution_code, starter_code, test_harness, tags)
 
-    # Compile
-    compile_result = compile_rust_code(assembled, compile_timeout)
+    # Compile and run tests inside a single TemporaryDirectory so the
+    # binary stays alive for run_tests.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        compile_result = compile_rust_code(assembled, compile_timeout, tmpdir=tmpdir)
 
-    if not compile_result.success:
-        return 0.0, compile_result.error, None
+        if not compile_result.success:
+            return 0.0, compile_result.error, None
 
-    # Run tests
-    test_result = run_tests(compile_result.binary_path, test_timeout)
+        # Run tests — binary_path lives inside tmpdir which is still alive
+        test_result = run_tests(compile_result.binary_path, test_timeout)
 
     if test_result.all_passed:
         return 1.0, None, test_result.output
