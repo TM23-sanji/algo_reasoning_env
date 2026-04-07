@@ -1,0 +1,27 @@
+[project]
+name = "algo-reasoning-env"
+version = "1.0.0"
+description = "OpenEnv environment for evaluating AI agents on Rust code correctness, reasoning, and time complexity"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.1.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "pydantic>=2.0.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["algo_reasoning_env"]
