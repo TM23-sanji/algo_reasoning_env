@@ -18,8 +18,6 @@ Usage:
     uvicorn server.app:app --host 0.0.0.0 --port 7860 --workers 4
 """
 
-import os
-
 try:
     from openenv.core.env_server.http_server import create_app as create_openenv_app
     from openenv.core.env_server.types import ServerMode
@@ -36,25 +34,9 @@ from algo_reasoning_env import (
 )
 
 
-def get_env_factory():
-    """
-    Create an environment factory function.
-
-    Returns a callable that creates fresh environment instances.
-    """
-
-    def factory():
-        return AlgoReasoningEnvironment(
-            data_dir=os.getenv("DATA_DIR", "/data"),
-            api_key=os.getenv("LIGHTNING_API_KEY"),
-        )
-
-    return factory
-
-
 # Create the FastAPI app
 app = create_openenv_app(
-    env_factory=get_env_factory(),
+    env=AlgoReasoningEnvironment,
     action_cls=AlgoReasoningAction,
     observation_cls=AlgoReasoningObservation,
     env_name="algo_reasoning_env",
