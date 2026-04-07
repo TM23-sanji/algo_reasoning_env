@@ -3,8 +3,8 @@
 
 FROM python:3.11-slim
 
-# Install Rust (minimal installation with rustc only)
-RUN apt-get update && apt-get install -y curl && \
+# Install Rust + C linker (gcc/cc is required by rustc for linking)
+RUN apt-get update && apt-get install -y curl gcc libc6-dev && \
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
