@@ -37,8 +37,20 @@ from algo_reasoning_env import (
 )
 
 
-def get_landing_html() -> str:
-    return """<!DOCTYPE html>
+# Create the FastAPI app
+app = create_openenv_app(
+    env=AlgoReasoningEnvironment,
+    action_cls=AlgoReasoningAction,
+    observation_cls=AlgoReasoningObservation,
+    env_name="algo_reasoning_env",
+    max_concurrent_envs=1,
+)
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> HTMLResponse:
+    """Landing page explaining how the environment works."""
+    html = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -52,7 +64,6 @@ def get_landing_html() -> str:
     --text-primary: #1a1a2e;
     --text-secondary: #5c5c7a;
     --accent: #c45c26;
-    --accent-light: #fef3ed;
     --pill-t-bg: #e8f5ee;
     --pill-t-color: #0a5c36;
     --pill-t-border: #0a5c36;
@@ -187,23 +198,8 @@ def get_landing_html() -> str:
   <div class="step-title">agent produces action</div>
   <div class="note">The agent (LLM) receives the observation and must return a typed <span class="pill pill-a">action</span> with three fields — Rust solution code, step-by-step reasoning, and time complexity label.</div>
   <div class="code">action = AlgoReasoningAction(
-  solution_code="""
-impl Solution {
-    pub fn two_sum(nums: Vec<i32>, target: i32) -> Vec<i32> {
-        use std::collections::HashMap;
-        let mut map = HashMap::new();
-        for (i, &num) in nums.iter().enumerate() {
-            let complement = target - num;
-            if let Some(&j) = map.get(&complement) {
-                return vec![j as i32, i as i32];
-            }
-            map.insert(num, i);
-        }
-        vec![]
-    }
-}
-  """,
-  reasoning_steps="step-1: Create a HashMap for O(1) lookup. step-2: Iterate through nums, check if complement exists. step-3: Return indices if found.",
+  solution_code="impl Solution { pub fn two_sum(...) }",
+  reasoning_steps="step-1: Create a HashMap. step-2: Iterate and check complement.",
   time_complexity="O(n)",
 )</div>
   <div class="note">The <strong>reasoning_steps field</strong> is evaluated by an LLM judge for clarity and logical coherence. The <strong>time_complexity field</strong> is matched against ground truth Big-O notation.</div>
@@ -217,7 +213,7 @@ impl Solution {
   code = action.solution_code,
   timeout_sec = 30,
 )
-# Returns: { compilation_ok: bool, test_output: str, compilation_error: str | None }</div>
+# Returns: { compilation_ok, test_output, compilation_error }</div>
   <div class="row">
     <div class="card"><div class="card-label">on timeout</div><div class="card-val">reward = 0.0, done = True</div></div>
     <div class="card"><div class="card-label">on compile error</div><div class="card-val">reward = 0.0, error returned</div></div>
@@ -272,21 +268,19 @@ impl Solution {
     "test_harness": "...",
     "expected_complexity": "O(n)",
     "ground_truth_explanation": "...",
-    "last_output": [1, 2],          # code produced this output
+    "last_output": [1, 2],
     "execution_ok": True,
     "step": 1,
   },
   reward = 0.83,
-  done   = False,   # continues indefinitely
+  done   = False,
   info   = {
     "correctness_reward": 1.0,
     "reasoning_score": 0.65,
     "complexity_score": 1,
-    "compilation_error": None,
-    "test_output": "all tests passed",
   }
 )</div>
-  <div class="note">The <strong>info dict breakdown</strong> enables RL trainers to shape auxiliary losses per component. The agent sees its own output vs expected, and can refine its complexity claim on the next step.</div>
+  <div class="note">The <strong>info dict breakdown</strong> enables RL trainers to shape auxiliary losses per component.</div>
 </div>
 
 <!-- STEP 6: dataset overview -->
@@ -297,17 +291,17 @@ impl Solution {
     <div class="card" style="border-left:3px solid #0a5c36;border-radius:0 var(--radius) var(--radius) 0;">
       <div class="card-label"><span class="pill pill-g">Easy</span></div>
       <div class="card-val" style="margin-bottom:4px;">Sort / reverse / search</div>
-      <div style="font-size:0.8rem;color:var(--text-secondary);">3 examples unambiguously reveal the pattern. O(n) or O(n log n). Frontier models score ~0.9.</div>
+      <div style="font-size:0.8rem;color:var(--text-secondary);">O(n) or O(n log n). Frontier models score ~0.9.</div>
     </div>
     <div class="card" style="border-left:3px solid #c45c26;border-radius:0 var(--radius) var(--radius) 0;">
       <div class="card-label"><span class="pill pill-a">Medium</span></div>
       <div class="card-val" style="margin-bottom:4px;">Two-pointer / sliding window</div>
-      <div style="font-size:0.8rem;color:var(--text-secondary);">Pattern requires seeing the constraint. O(n). Requires real induction.</div>
+      <div style="font-size:0.8rem;color:var(--text-secondary);">O(n). Requires real induction.</div>
     </div>
     <div class="card" style="border-left:3px solid #a32d2d;border-radius:0 var(--radius) var(--radius) 0;">
       <div class="card-label"><span class="pill pill-r">Hard</span></div>
       <div class="card-val" style="margin-bottom:4px;">DP / graph algorithms</div>
-      <div style="font-size:0.8rem;color:var(--text-secondary);">Examples consistent with multiple algorithm classes. Frontier models score ~0.3–0.4.</div>
+      <div style="font-size:0.8rem;color:var(--text-secondary);">Frontier models score ~0.3–0.4.</div>
     </div>
   </div>
   <div class="note">All problems come from the <code>complexity_reasoning_data/</code> dataset embedded in the Docker image. Problems cycle forever.</div>
@@ -349,21 +343,7 @@ prevBtn.disabled = true;
 </script>
 </body>
 </html>"""
-
-
-# Create the FastAPI app
-app = create_openenv_app(
-    env=AlgoReasoningEnvironment,
-    action_cls=AlgoReasoningAction,
-    observation_cls=AlgoReasoningObservation,
-    env_name="algo_reasoning_env",
-    max_concurrent_envs=1,
-)
-
-
-@app.get("/")
-async def root():
-    return HTMLResponse(get_landing_html())
+    return HTMLResponse(content=html)
 
 
 def main(host: str = "0.0.0.0", port: int = 7860):
