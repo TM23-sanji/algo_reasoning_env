@@ -139,11 +139,15 @@ class AlgoReasoningEnvironment(Environment):
             problem = self._data_loader.get_problem_by_id(problem_id)
             if problem is None:
                 raise RuntimeError(f"Problem {problem_id} not found in dataset")
-        elif task_name and task_name.lower() in ("easy", "medium", "hard"):
-            difficulty = task_name.capitalize()
-            problem = self._data_loader.get_next_by_difficulty(difficulty)
-            if problem is None:
-                raise RuntimeError(f"No {difficulty} problems available in dataset")
+        elif task_name:
+            difficulty_name = task_name.lower().replace("task_", "")
+            if difficulty_name in ("easy", "medium", "hard"):
+                difficulty = difficulty_name.capitalize()
+                problem = self._data_loader.get_next_by_difficulty(difficulty)
+                if problem is None:
+                    raise RuntimeError(f"No {difficulty} problems available in dataset")
+            else:
+                problem = self._data_loader.get_next()
         else:
             problem = self._data_loader.get_next()
 

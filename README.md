@@ -148,7 +148,7 @@ pip install -e algo_reasoning_env
 ### Running the Server
 
 ```bash
-export API_KEY="your_api_key"
+export HF_TOKEN="your_huggingface_api_key"
 export API_BASE_URL="https://router.huggingface.co/v1"
 export DATA_DIR="/path/to/data"
 
@@ -159,25 +159,26 @@ uvicorn algo_reasoning_env.server.app:app --host 0.0.0.0 --port 7860
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `API_KEY` | Yes | Injected by evaluator at runtime (via LiteLLM proxy). For local testing, set your own key. |
-| `API_BASE_URL` | Yes | Injected by evaluator. For local testing: `https://router.huggingface.co/v1` |
+| `HF_TOKEN` | Yes | HuggingFace API key. Used for LLM calls (also accepts `API_KEY`). |
+| `API_BASE_URL` | Yes | LLM API endpoint (default: `https://router.huggingface.co/v1`) |
 | `MODEL_NAME` | No | Model identifier (default: `Qwen/Qwen2.5-72B-Instruct`) |
 | `DATA_DIR` | No | Path to dataset files (default: `/data`) |
 | `HF_SPACE_URL` | No | HF Space URL for HTTP-based evaluation |
-| `HF_TOKEN` | No | HuggingFace token for HF services (NOT for LLM calls) |
 
 ### Using via HTTP API
 
 The server uses session-based state management. Each `/reset` creates a session and returns a `session_id` that must be passed to `/step`.
 
+Pass `task_name` to filter by difficulty: `"easy"`, `"medium"`, or `"hard"`.
+
 ```bash
-# 1. Reset — get a problem and session_id
+# 1. Reset — get a problem for a specific task and session_id
 curl -X POST "https://your-space.hf.space/reset" \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d '{"task_name": "easy"}'
 
 # Response:
-# {"session_id": "abc-123-...", "observation": {"problem_id": 1, "task_id": "two-sum", ...}}
+# {"session_id": "abc-123-...", "observation": {"problem_id": 1, "task_id": "two-sum", "difficulty": "Easy", ...}}
 
 # 2. Step — submit solution with session_id
 curl -X POST "https://your-space.hf.space/step" \
@@ -193,6 +194,14 @@ curl -X POST "https://your-space.hf.space/step" \
 
 # Response:
 # {"observation": {...}, "reward": 0.85, "done": true}
+```
+
+You can also omit `task_name` to load problems sequentially:
+
+```bash
+curl -X POST "https://your-space.hf.space/reset" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
 
 There is also a stateless `/evaluate` endpoint that combines reset+step:
@@ -213,8 +222,14 @@ curl -X POST "https://your-space.hf.space/evaluate" \
 from algo_reasoning_env import AlgoReasoningEnvironment, AlgoReasoningAction
 
 env = AlgoReasoningEnvironment(data_dir="/data")
-observation = env.reset()
+
+# Load a specific difficulty
+observation = env.reset(task_name="easy")
+# Or load next problem sequentially
+# observation = env.reset()
+
 print(f"Problem: {observation.task_id}")
+print(f"Difficulty: {observation.difficulty}")
 print(f"Description: {observation.problem_description}")
 
 action = AlgoReasoningAction(
@@ -232,7 +247,7 @@ print(f"Reward: {result.reward}")
 ## Baseline Scores
 
 ```bash
-export API_KEY="your_api_key"
+export HF_TOKEN="your_huggingface_api_key"
 export API_BASE_URL="https://router.huggingface.co/v1"
 export MODEL_NAME="Qwen/Qwen2.5-72B-Instruct"
 
@@ -280,7 +295,7 @@ The validator runs 3 checks:
 docker build -t algo-reasoning-env .
 
 docker run -p 7860:7860 \
-  -e API_KEY="your_api_key" \
+  -e HF_TOKEN="your_huggingface_api_key" \
   -e API_BASE_URL="https://router.huggingface.co/v1" \
   -v /path/to/data:/data \
   algo-reasoning-env
