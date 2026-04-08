@@ -391,7 +391,7 @@ _LANDING_HTML = """<!DOCTYPE html>
 
 <header>
   <h1><span>algo_reasoning_env</span> — Rust LeetCode Evaluator</h1>
-  <p>OpenEnv environment for evaluating AI agents on Rust code correctness, reasoning, and time complexity</p>
+  <p>Three-dimensional evaluation of AI agents: Rust code correctness, algorithmic reasoning, and time complexity — 952 problems, built from scratch</p>
 </header>
 
 <div class="controls">
@@ -450,7 +450,7 @@ Response:
 <!-- STEP 3: sandbox execution -->
 <div class="sp" id="s2">
   <div class="step-title">step() — Rust compilation &amp; test execution</div>
-  <div class="note">The server receives the action. Rust code is compiled with <strong>rustc</strong> inside a restricted subprocess — 30s timeout for both compilation and tests. No network access, no external dependencies.</div>
+  <div class="note">The server receives the action. Rust code is compiled with <strong>rustc</strong> inside a restricted subprocess — 30s timeout for both compilation and tests. No network access, no external dependencies. <strong>Rust's compiler is the first grader</strong> — code that doesn't type-check, violates ownership rules, or has syntax errors gets a hard 0.0. Unlike Python, there's no duck typing to hide incomplete understanding.</div>
   <div class="code">result = sandbox.run(
   code = action.solution_code,
   timeout_sec = 30,
@@ -465,8 +465,8 @@ Response:
 
 <!-- STEP 4: grading -->
 <div class="sp" id="s3">
-  <div class="step-title">grader — computing reward</div>
-  <div class="note">Three independent scores combined into one reward signal. Each component gives <strong>partial credit</strong> — wrong complexity still earns output score if the code passes tests.</div>
+  <div class="step-title">grader — three-dimensional reward</div>
+  <div class="note">Most coding benchmarks ask one question: <em>does it pass?</em> We ask three. Correctness is weighted highest (0.5) because Rust compilation is genuinely hard — the model must handle exact types, ownership, and borrow checking. Reasoning (0.3) tests understanding beyond code generation via LLM judge comparison to expert ground truth. Complexity (0.2) is simpler to get right (just state Big-O), so it's weighted lower — but semantic matching via LLM ensures <strong>O(m*n) == O(n*m)</strong>.</div>
   <div class="code">reward = 0.50 * correctness_reward
           + 0.30 * reasoning_score
           + 0.20 * complexity_score
@@ -477,10 +477,10 @@ Response:
 #   0.0 = compilation error
 
 # reasoning (0.3 weight):
-#   LLM judge scores 0.0–1.0 based on explanation clarity
+#   LLM judge scores 0.0-1.0 vs expert explanation
 
 # complexity (0.2 weight):
-#   1 = Big-O matches ground truth
+#   1 = Big-O semantically matches ground truth
 #   0 = mismatch</div>
   <div class="row">
     <div class="card" style="border-left:3px solid #0a5c36;border-radius:0 var(--radius) var(--radius) 0;">
@@ -489,7 +489,7 @@ Response:
     </div>
     <div class="card" style="border-left:3px solid #534ab7;border-radius:0 var(--radius) var(--radius) 0;">
       <div class="card-label">reasoning <span class="pill pill-p">30%</span></div>
-      <div class="card-val">LLM judge 0.0–1.0</div>
+      <div class="card-val">LLM judge 0.0-1.0</div>
     </div>
     <div class="card" style="border-left:3px solid #c45c26;border-radius:0 var(--radius) var(--radius) 0;">
       <div class="card-label">complexity <span class="pill pill-a">20%</span></div>
@@ -531,26 +531,26 @@ Response:
 
 <!-- STEP 6: dataset overview -->
 <div class="sp" id="s5">
-  <div class="step-title">dataset overview &amp; difficulty tiers</div>
-  <div class="note" style="margin-bottom:1rem;">The environment cycles through problems in order. After problem N-1, it wraps back to 0. Weighted scoring rewards <strong>frontier-challenging hard problems</strong> — a task where frontier models score 0.3 is better than one where they score 0.9.</div>
+  <div class="step-title">dataset — 952 problems, built from scratch for Rust</div>
+  <div class="note" style="margin-bottom:1rem;">Every problem was constructed from the ground up: LeetCode descriptions paired with expert explanations (from doocs/leetcode), Python tests converted to Rust via LLM, solutions generated with compile-error rollback (up to 3 retries). <strong>Hard problems contribute 3.3x more</strong> to the score than easy ones.</div>
   <div class="row">
     <div class="card" style="border-left:3px solid #0a5c36;border-radius:0 var(--radius) var(--radius) 0;">
-      <div class="card-label"><span class="pill pill-g">Easy</span></div>
+      <div class="card-label"><span class="pill pill-g">Easy</span> 347 (36%)</div>
       <div class="card-val" style="margin-bottom:4px;">Sort / reverse / search</div>
-      <div style="font-size:0.8rem;color:var(--text-secondary);">O(n) or O(n log n). Frontier models score ~0.9.</div>
+      <div style="font-size:0.8rem;color:var(--text-secondary);">O(n) or O(n log n). Multiplier 0.3x.</div>
     </div>
     <div class="card" style="border-left:3px solid #c45c26;border-radius:0 var(--radius) var(--radius) 0;">
-      <div class="card-label"><span class="pill pill-a">Medium</span></div>
+      <div class="card-label"><span class="pill pill-a">Medium</span> 481 (51%)</div>
       <div class="card-val" style="margin-bottom:4px;">Two-pointer / sliding window</div>
-      <div style="font-size:0.8rem;color:var(--text-secondary);">O(n). Requires real induction.</div>
+      <div style="font-size:0.8rem;color:var(--text-secondary);">O(n). Requires real induction. Multiplier 0.5x.</div>
     </div>
     <div class="card" style="border-left:3px solid #a32d2d;border-radius:0 var(--radius) var(--radius) 0;">
-      <div class="card-label"><span class="pill pill-r">Hard</span></div>
+      <div class="card-label"><span class="pill pill-r">Hard</span> 124 (13%)</div>
       <div class="card-val" style="margin-bottom:4px;">DP / graph algorithms</div>
-      <div style="font-size:0.8rem;color:var(--text-secondary);">Frontier models score ~0.3–0.4.</div>
+      <div style="font-size:0.8rem;color:var(--text-secondary);">Multiplier 1.0x. Where the real challenge is.</div>
     </div>
   </div>
-  <div class="note">All problems come from the <code>complexity_reasoning_data/</code> dataset embedded in the Docker image. Problems cycle forever.</div>
+  <div class="note">Top tags: Array, String, Hash Table, Dynamic Programming, Math, Sorting, Greedy. Problems cycle indefinitely.</div>
 </div>
 
 <div class="footer">algo_reasoning_env &middot; OpenEnv &middot; Rust LeetCode Evaluator</div>

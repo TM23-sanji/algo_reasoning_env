@@ -14,22 +14,44 @@ app: algo_reasoning_env.server.app:app
 
 port: 7860
 
+endpoints:
+  reset: /reset
+  step: /step
+  state: /state
+
+reward:
+  min: 0.0
+  max: 1.0
+
+observation_space:
+  type: object
+  fields:
+    session_id: string
+    problem_id: integer
+    difficulty: string
+    problem_description: string
+    starter_code: string
+    expected_complexity: string
+
+action_space:
+  type: object
+  fields:
+    solution_code: string
+    reasoning_steps: string
+    time_complexity: string
+
 tasks:
-  - id: task_easy
+  - name: easy
     difficulty: easy
     description: Easy problem - reasoning + code + tests
     weight: 0.3
-    grader: null
 
-  - id: task_medium
+  - name: medium
     difficulty: medium
     description: Medium problem - reasoning + code + tests
     weight: 0.5
-    grader: null
 
-  - id: task_hard
+  - name: hard
     difficulty: hard
     description: Hard problem - reasoning + code + tests
     weight: 1.0
-    grader: null
-    

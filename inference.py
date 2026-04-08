@@ -270,7 +270,7 @@ def env_step(session_id: str, action: Dict) -> Dict:
 # ---------------------------------------------------------------------------
 
 
-def run_inference(num_problems: int = 952, output_path: str = "results.jsonl") -> None:
+def run_inference(num_problems: int = 200, output_path: str = "results.jsonl") -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
     all_rewards: List[float] = []
@@ -505,8 +505,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-problems",
         type=int,
-        default=952,
-        help="Number of problems to evaluate (default: 952)",
+        default=200,
+        help="Number of problems to evaluate (default: 200)",
     )
     parser.add_argument(
         "--output",
