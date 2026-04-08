@@ -1,4 +1,10 @@
-# server/app.py  (this is just a re-export / forwarder)
-from algo_reasoning_env.server.app import app, main
+# server/app.py — re-export so OpenEnv validator can find app and main()
+from algo_reasoning_env.server.app import app as _app
+from algo_reasoning_env.server.app import main as _main
 
-__all__ = ["app", "main"]
+# Re-export so validator can see them
+app = _app
+main = _main
+
+if __name__ == "__main__":
+    main()
