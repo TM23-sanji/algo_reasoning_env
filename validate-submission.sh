@@ -115,7 +115,7 @@ fi
 # --- Check 4: openenv.yaml has port 7860 ---
 echo "[4/4] openenv.yaml has correct port"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-YAML_FILE="${SCRIPT_DIR}/algo_reasoning_env/openenv.yaml"
+YAML_FILE="${SCRIPT_DIR}/openenv.yaml"
 
 if [ -f "$YAML_FILE" ]; then
     if grep -q "port: 7860" "$YAML_FILE"; then

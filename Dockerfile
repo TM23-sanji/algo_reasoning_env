@@ -28,6 +28,9 @@ COPY complexity_reasoning_data/ /data/
 # Copy entry point
 COPY app.py .
 
+# Copy OpenEnv spec
+COPY openenv.yaml .
+
 # Expose port (HF Spaces uses 7860 by default)
 EXPOSE 7860
 

@@ -72,6 +72,26 @@ class AlgoReasoningEnvironment(Environment):
             test_timeout=test_timeout,
         )
 
+    def _get_difficulty_multiplier(self, difficulty: str) -> float:
+        """
+        Get the reward multiplier based on problem difficulty.
+
+        Harder problems are weighted more heavily so that solving them
+        contributes more to the overall score.
+
+        Args:
+            difficulty: Problem difficulty ("Easy", "Medium", "Hard")
+
+        Returns:
+            Multiplier value (Easy=0.3, Medium=0.5, Hard=1.0)
+        """
+        multipliers = {
+            "Easy": 0.3,
+            "Medium": 0.5,
+            "Hard": 1.0,
+        }
+        return multipliers.get(difficulty, 0.5)
+
     def set_rubric(self, rubric: AlgoReasoningRubric) -> None:
         """
         Set or replace the rubric used for evaluation.
@@ -180,8 +200,13 @@ class AlgoReasoningEnvironment(Environment):
             + 0.2 * evaluation.complexity_score
         )
 
+        # Apply difficulty multiplier so harder problems contribute more
+        difficulty = self._current_observation.difficulty
+        multiplier = self._get_difficulty_multiplier(difficulty)
+        weighted_reward = combined_reward * multiplier
+
         # Update observation with results
-        self._current_observation.reward = combined_reward
+        self._current_observation.reward = weighted_reward
         self._current_observation.reasoning_score = evaluation.reasoning_score
         self._current_observation.complexity_score = evaluation.complexity_score
         self._current_observation.correctness_reward = evaluation.correctness_reward

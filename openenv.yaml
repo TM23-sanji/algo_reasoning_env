@@ -1,0 +1,31 @@
+spec_version: 1
+
+name: algo_reasoning_env
+
+description: Algorithm reasoning + code generation + test completion with hybrid grading
+
+version: "1.0.0"
+
+type: coding
+
+runtime: fastapi
+
+app: algo_reasoning_env.server.app:app
+
+port: 7860
+
+tasks:
+  - id: task_easy
+    difficulty: easy
+    description: Easy problem - reasoning + code + tests
+    weight: 0.3
+
+  - id: task_medium
+    difficulty: medium
+    description: Medium problem - reasoning + code + tests
+    weight: 0.5
+
+  - id: task_hard
+    difficulty: hard
+    description: Hard problem - reasoning + code + tests
+    weight: 1.0

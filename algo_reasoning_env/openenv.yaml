@@ -1,6 +1,0 @@
-spec_version: 1
-name: algo_reasoning_env
-type: space
-runtime: fastapi
-app: server.app:app
-port: 7860
