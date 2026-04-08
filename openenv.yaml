@@ -19,13 +19,17 @@ tasks:
     difficulty: easy
     description: Easy problem - reasoning + code + tests
     weight: 0.3
+    grader: null
 
   - id: task_medium
     difficulty: medium
     description: Medium problem - reasoning + code + tests
     weight: 0.5
+    grader: null
 
   - id: task_hard
     difficulty: hard
     description: Hard problem - reasoning + code + tests
     weight: 1.0
+    grader: null
+    
