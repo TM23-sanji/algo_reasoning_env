@@ -62,6 +62,9 @@ class DataLoader:
         self._starter_codes: Dict[int, StarterCode] = {}
         self._test_harnesses: Dict[int, TestHarness] = {}
         self._current_index = 0
+        # Per-difficulty tracking
+        self._problems_by_difficulty: Dict[str, List[Problem]] = {}
+        self._current_index_by_difficulty: Dict[str, int] = {}
         self._load_data()
 
     def _load_data(self) -> None:
@@ -77,6 +80,14 @@ class DataLoader:
                     self._problems_by_id[problem.problem_id] = problem
             # Sort by problem_id for consistent ordering
             self._problems.sort(key=lambda p: p.problem_id)
+
+            # Build per-difficulty index
+            for problem in self._problems:
+                diff = problem.difficulty
+                if diff not in self._problems_by_difficulty:
+                    self._problems_by_difficulty[diff] = []
+                    self._current_index_by_difficulty[diff] = 0
+                self._problems_by_difficulty[diff].append(problem)
 
         # Load starter codes
         starter_path = self.data_dir / "starter_codes.jsonl"
@@ -181,6 +192,30 @@ class DataLoader:
     def reset(self) -> None:
         """Reset index to beginning."""
         self._current_index = 0
+
+    def get_next_by_difficulty(self, difficulty: str) -> Optional[Problem]:
+        """
+        Get next problem matching the given difficulty, cycling through.
+
+        Args:
+            difficulty: "Easy", "Medium", or "Hard"
+
+        Returns:
+            Next problem of that difficulty, or None if no problems match
+        """
+        problems = self._problems_by_difficulty.get(difficulty)
+        if not problems:
+            return None
+
+        idx = self._current_index_by_difficulty.get(difficulty, 0)
+        problem = problems[idx]
+        self._current_index_by_difficulty[difficulty] = (idx + 1) % len(problems)
+        return problem
+
+    def reset_by_difficulty(self, difficulty: str) -> None:
+        """Reset the cycle index for a specific difficulty."""
+        if difficulty in self._current_index_by_difficulty:
+            self._current_index_by_difficulty[difficulty] = 0
 
     def __len__(self) -> int:
         """Return number of problems."""

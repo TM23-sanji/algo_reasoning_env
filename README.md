@@ -148,7 +148,8 @@ pip install -e algo_reasoning_env
 ### Running the Server
 
 ```bash
-export LIGHTNING_API_KEY="your_api_key"
+export API_KEY="your_api_key"
+export API_BASE_URL="https://router.huggingface.co/v1"
 export DATA_DIR="/path/to/data"
 
 uvicorn algo_reasoning_env.server.app:app --host 0.0.0.0 --port 7860
@@ -158,10 +159,12 @@ uvicorn algo_reasoning_env.server.app:app --host 0.0.0.0 --port 7860
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `LIGHTNING_API_KEY` | Yes | API key for LLM judge calls |
+| `API_KEY` | Yes | Injected by evaluator at runtime (via LiteLLM proxy). For local testing, set your own key. |
+| `API_BASE_URL` | Yes | Injected by evaluator. For local testing: `https://router.huggingface.co/v1` |
+| `MODEL_NAME` | No | Model identifier (default: `Qwen/Qwen2.5-72B-Instruct`) |
 | `DATA_DIR` | No | Path to dataset files (default: `/data`) |
-| `API_BASE_URL` | No | LLM API base URL (default: `https://lightning.ai/api/v1/`) |
-| `MODEL_NAME` | No | LLM model name (default: `lightning-ai/gpt-oss-20b`) |
+| `HF_SPACE_URL` | No | HF Space URL for HTTP-based evaluation |
+| `HF_TOKEN` | No | HuggingFace token for HF services (NOT for LLM calls) |
 
 ### Using via HTTP API
 
@@ -229,27 +232,30 @@ print(f"Reward: {result.reward}")
 ## Baseline Scores
 
 ```bash
-export LIGHTNING_API_KEY="your_api_key"
-export API_BASE_URL="https://lightning.ai/api/v1/"
-export MODEL_NAME="lightning-ai/gpt-oss-20b"
+export API_KEY="your_api_key"
+export API_BASE_URL="https://router.huggingface.co/v1"
+export MODEL_NAME="Qwen/Qwen2.5-72B-Instruct"
 
-# Run baseline (default: 200 problems)
+# Run baseline (evaluates all 3 tasks: easy, medium, hard)
 python inference.py
 
-# Run all 952 problems
-python inference.py --num-problems 952
-
-# Quick test
-python inference.py --num-problems 10
+# With custom output
+python inference.py --output results.jsonl
 ```
 
 Expected output:
 ```
-[START] task=algo_reasoning env=algo_reasoning_env model=lightning-ai/gpt-oss-20b
-[STEP] step=1 action="solution=[len=120] reasoning=[step-1: Create HashMap...] complexity=[O(n)]" reward=+0.85 done=True error=None
-[STEP] step=2 action="solution=[len=95] reasoning=[step-1: Use two pointers...] complexity=[O(n)]" reward=+0.30 done=True error=None
-...
-[END] success=true steps=200 score=0.4500 rewards=[0.85, 0.30, ...]
+[START] task=task_easy env=algo_reasoning_env model=Qwen/Qwen2.5-72B-Instruct
+[STEP] step=1 action="solution=[len=120] reasoning=[step-1: Create HashMap...] complexity=[O(n)]" reward=0.85 done=true error=null
+[END] success=true steps=1 score=0.85 rewards=0.85
+
+[START] task=task_medium env=algo_reasoning_env model=Qwen/Qwen2.5-72B-Instruct
+[STEP] step=1 action="solution=[len=95] reasoning=[step-1: Use two pointers...] complexity=[O(n)]" reward=0.30 done=true error=null
+[END] success=false steps=1 score=0.30 rewards=0.30
+
+[START] task=task_hard env=algo_reasoning_env model=Qwen/Qwen2.5-72B-Instruct
+[STEP] step=1 action="solution=[len=200] reasoning=[step-1: DP with memo...] complexity=[O(n^2)]" reward=0.72 done=true error=null
+[END] success=true steps=1 score=0.72 rewards=0.72
 ```
 
 ---
@@ -274,7 +280,8 @@ The validator runs 3 checks:
 docker build -t algo-reasoning-env .
 
 docker run -p 7860:7860 \
-  -e LIGHTNING_API_KEY="your_api_key" \
+  -e API_KEY="your_api_key" \
+  -e API_BASE_URL="https://router.huggingface.co/v1" \
   -v /path/to/data:/data \
   algo-reasoning-env
 ```

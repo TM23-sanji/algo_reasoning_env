@@ -48,6 +48,10 @@ class ResetRequest(BaseModel):
         default=None,
         description="Specific problem ID to load. If omitted, loads next in sequence.",
     )
+    task_name: Optional[str] = Field(
+        default=None,
+        description="Task name: easy, medium, or hard. Filters problems by difficulty.",
+    )
 
 
 class StepRequestBody(BaseModel):
@@ -163,11 +167,11 @@ async def reset(request: ResetRequest = None) -> Dict[str, Any]:
     Creates a new session. The caller must store the returned ``session_id``
     and pass it to ``/step``.
 
-    Pass ``problem_id`` to load a specific problem, or omit it to load
-    the next problem in sequence.
+    Pass ``problem_id`` to load a specific problem, ``task_name`` to filter
+    by difficulty (easy/medium/hard), or omit both to load the next in sequence.
     """
     data_dir = os.getenv("DATA_DIR", "/data")
-    api_key = os.getenv("LIGHTNING_API_KEY")
+    api_key = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
     try:
         session_id, env = create_session(data_dir=data_dir, api_key=api_key)
@@ -176,7 +180,8 @@ async def reset(request: ResetRequest = None) -> Dict[str, Any]:
 
     try:
         problem_id = request.problem_id if request else None
-        obs = env.reset(problem_id=problem_id)
+        task_name = request.task_name if request else None
+        obs = env.reset(problem_id=problem_id, task_name=task_name)
     except Exception as e:
         delete_session(session_id)
         raise HTTPException(status_code=500, detail=f"Reset failed: {e}")
@@ -245,7 +250,7 @@ async def evaluate(request: EvaluateRequest) -> Dict[str, Any]:
     submission, and returns the result. No ``session_id`` is needed.
     """
     data_dir = os.getenv("DATA_DIR", "/data")
-    api_key = os.getenv("LIGHTNING_API_KEY")
+    api_key = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
     try:
         session_id, env = create_session(data_dir=data_dir, api_key=api_key)

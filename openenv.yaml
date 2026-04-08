@@ -41,17 +41,32 @@ action_space:
     time_complexity: string
 
 tasks:
-  - name: easy
+  - id: task_easy
+    name: easy
     difficulty: easy
-    description: Easy problem - reasoning + code + tests
+    description: "Easy problem - reasoning + code + tests"
+    max_steps: 10
     weight: 0.3
+    grader:
+      type: llm
+      prompt_template: "Score the algorithm reasoning and code quality 0.0 to 1.0..."
 
-  - name: medium
+  - id: task_medium
+    name: medium
     difficulty: medium
-    description: Medium problem - reasoning + code + tests
+    description: "Medium problem - reasoning + code + tests"
+    max_steps: 15
     weight: 0.5
+    grader:
+      type: llm
+      prompt_template: "Score the algorithm reasoning and code quality 0.0 to 1.0..."
 
-  - name: hard
+  - id: task_hard
+    name: hard
     difficulty: hard
-    description: Hard problem - reasoning + code + tests
+    description: "Hard problem - reasoning + code + tests"
+    max_steps: 20
     weight: 1.0
+    grader:
+      type: llm
+      prompt_template: "Score the algorithm reasoning and code quality 0.0 to 1.0..."

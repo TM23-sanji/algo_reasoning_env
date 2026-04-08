@@ -37,7 +37,7 @@ def create_session(
     session_id = str(uuid4())
     env = AlgoReasoningEnvironment(
         data_dir=data_dir,
-        api_key=api_key or os.getenv("LIGHTNING_API_KEY"),
+        api_key=api_key or os.getenv("HF_TOKEN") or os.getenv("API_KEY"),
     )
     _sessions[session_id] = env
     return session_id, env

@@ -67,7 +67,7 @@ class AlgoReasoningEnvironment(Environment):
 
         # Initialize rubric
         self._rubric = AlgoReasoningRubric(
-            api_key=api_key or os.getenv("LIGHTNING_API_KEY"),
+            api_key=api_key or os.getenv("HF_TOKEN") or os.getenv("API_KEY"),
             compile_timeout=compile_timeout,
             test_timeout=test_timeout,
         )
@@ -106,6 +106,7 @@ class AlgoReasoningEnvironment(Environment):
         seed: Optional[int] = None,
         episode_id: Optional[str] = None,
         problem_id: Optional[int] = None,
+        task_name: Optional[str] = None,
         **kwargs: Any,
     ) -> AlgoReasoningObservation:
         """
@@ -116,6 +117,9 @@ class AlgoReasoningEnvironment(Environment):
             episode_id: Optional episode ID for tracking
             problem_id: Optional specific problem ID to load.
                         If not provided, loads the next problem in sequence.
+            task_name: Optional task name ("easy", "medium", "hard").
+                       Filters problems by the corresponding difficulty.
+                       Ignored if problem_id is provided.
             **kwargs: Additional arguments (ignored)
 
         Returns:
@@ -130,11 +134,16 @@ class AlgoReasoningEnvironment(Environment):
             step_count=0,
         )
 
-        # Get problem — either by ID or next in sequence
+        # Get problem — by ID, by task_name difficulty, or next in sequence
         if problem_id is not None:
             problem = self._data_loader.get_problem_by_id(problem_id)
             if problem is None:
                 raise RuntimeError(f"Problem {problem_id} not found in dataset")
+        elif task_name and task_name.lower() in ("easy", "medium", "hard"):
+            difficulty = task_name.capitalize()
+            problem = self._data_loader.get_next_by_difficulty(difficulty)
+            if problem is None:
+                raise RuntimeError(f"No {difficulty} problems available in dataset")
         else:
             problem = self._data_loader.get_next()
 

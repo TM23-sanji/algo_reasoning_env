@@ -24,8 +24,8 @@ from .models import (
 
 
 # Default configuration
-DEFAULT_API_BASE_URL = "https://lightning.ai/api/v1/"
-DEFAULT_JUDGE_MODEL = "lightning-ai/gpt-oss-20b"
+DEFAULT_API_BASE_URL = "https://router.huggingface.co/v1"
+DEFAULT_JUDGE_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 JUDGE_TIMEOUT = 30
 REASONING_TEMPERATURE = 0.0
 COMPLEXITY_TEMPERATURE = 0.0
@@ -49,14 +49,14 @@ class LLMJudgeRubric(Rubric):
         Initialize the LLM judge rubric.
 
         Args:
-            api_key: API key for LLM calls. If None, reads from LIGHTNING_API_KEY env.
+            api_key: API key for LLM calls. If None, reads from API_KEY env.
             api_base_url: Base URL for API endpoint.
             model: Model identifier for LLM calls.
         """
         super().__init__()
-        self.api_key = api_key or os.getenv("LIGHTNING_API_KEY")
+        self.api_key = api_key or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
         if not self.api_key:
-            raise ValueError("LIGHTNING_API_KEY environment variable is required")
+            raise ValueError("HF_TOKEN or API_KEY environment variable is required")
 
         self.api_base_url = api_base_url
         self.model = model

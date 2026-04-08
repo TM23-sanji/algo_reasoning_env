@@ -7,14 +7,13 @@ for evaluation.
 
 Usage:
     python inference.py
-    python inference.py --num-problems 10
     python inference.py --output results.jsonl
 
 Required environment variables:
-    API_BASE_URL  The API endpoint for the LLM.
-    MODEL_NAME    The model identifier to use for inference.
-    HF_TOKEN      Your HuggingFace / API key.
-    HF_SPACE_URL  The HF Space URL (defaults to the deployed space).
+    API_KEY        Injected by evaluator at runtime (via LiteLLM proxy).
+    API_BASE_URL   Injected by evaluator at runtime.
+    MODEL_NAME     The model identifier (default: Qwen/Qwen2.5-72B-Instruct).
+    HF_SPACE_URL   The HF Space URL (defaults to the deployed space).
 """
 
 import argparse
@@ -34,15 +33,12 @@ HF_SPACE_URL = os.getenv(
     "HF_SPACE_URL",
     "https://tm23hgf-rust-algo-reasoning.hf.space",
 )
-API_BASE_URL = os.getenv("API_BASE_URL", "https://lightning.ai/api/v1/")
-MODEL_NAME = os.getenv(
-    "MODEL_NAME", "lightning-ai/gpt-oss-20b"
-)  # lightning-ai/nvidia-nemotron-3-super-120b-a12b
-API_KEY = os.getenv("LIGHTNING_API_KEY", "") or os.getenv("HF_TOKEN", "")
+API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 BENCHMARK = "algo_reasoning_env"
-TASK_NAME = "algo_reasoning"
-MAX_TOTAL_REWARD = 1.0
+TASKS = ["task_easy", "task_medium", "task_hard"]
 SUCCESS_SCORE_THRESHOLD = 0.7
 REQUEST_TIMEOUT = 120  # seconds for HTTP calls to HF Space
 
@@ -224,20 +220,20 @@ def parse_model_response(response: str) -> Tuple[str, str, str]:
 # ---------------------------------------------------------------------------
 
 
-def env_reset(problem_id: Optional[int] = None) -> Tuple[str, Dict]:
+def env_reset(task_name: Optional[str] = None) -> Tuple[str, Dict]:
     """
     Call POST /reset on the HF Space.
 
     Args:
-        problem_id: Optional specific problem ID to load.
-                    If not provided, loads the next problem in sequence.
+        task_name: Optional task name ("easy", "medium", "hard").
+                   Filters problems by the corresponding difficulty.
 
     Returns:
         (session_id, observation_dict)
     """
     payload: Dict[str, Any] = {}
-    if problem_id is not None:
-        payload["problem_id"] = problem_id
+    if task_name is not None:
+        payload["task_name"] = task_name
 
     resp = requests.post(
         f"{HF_SPACE_URL}/reset",
@@ -266,205 +262,252 @@ def env_step(session_id: str, action: Dict) -> Dict:
 
 
 # ---------------------------------------------------------------------------
+# Task evaluation
+# ---------------------------------------------------------------------------
+
+
+def run_task(
+    client: OpenAI,
+    task_name: str,
+    output_path: str,
+    task_results: List[Dict[str, Any]],
+) -> Tuple[float, List[float], int]:
+    """
+    Run evaluation for a single task (easy/medium/hard).
+
+    Returns:
+        (task_score, task_rewards, steps_taken)
+    """
+    task_rewards: List[float] = []
+    steps_taken = 0
+
+    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
+
+    try:
+        session_id, observation = env_reset(task_name=task_name)
+    except Exception as e:
+        print(f"[DEBUG] Reset for task {task_name} failed: {e}", flush=True)
+        log_step(
+            step=1,
+            action="RESET_FAILED",
+            reward=0.0,
+            done=True,
+            error=str(e)[:200],
+        )
+        task_results.append(
+            {
+                "task": task_name,
+                "problem_id": "",
+                "task_id": "",
+                "difficulty": "",
+                "correctness_reward": 0.0,
+                "reasoning_score": 0.0,
+                "complexity_score": 0,
+                "predicted_complexity": "",
+                "ground_truth_complexity": "",
+                "generated_code": "",
+                "reasoning_steps": "",
+                "reward": 0.0,
+                "error": f"Reset failed: {str(e)[:200]}",
+            }
+        )
+        task_rewards.append(0.0)
+        steps_taken = 1
+        score = 0.01
+        log_end(success=False, steps=steps_taken, score=score, rewards=task_rewards)
+        return score, task_rewards, steps_taken
+
+    steps_taken = 1
+
+    try:
+        problem_desc = observation.get("problem_description", "")
+        starter_code = observation.get("starter_code", "")
+        expected_complexity = observation.get("expected_complexity", "")
+
+        # Build prompt and get model response
+        prompt = build_prompt(
+            problem_desc=problem_desc,
+            starter_code=starter_code,
+            expected_complexity=expected_complexity,
+        )
+
+        model_response = get_model_response(client, MODEL_NAME, prompt)
+
+        if not model_response:
+            log_step(
+                step=steps_taken,
+                action="MODEL_FAILED",
+                reward=0.0,
+                done=True,
+                error="Model request failed",
+            )
+            task_rewards.append(0.0)
+            task_results.append(
+                {
+                    "task": task_name,
+                    "problem_id": observation.get("problem_id", ""),
+                    "task_id": observation.get("task_id", ""),
+                    "difficulty": observation.get("difficulty", ""),
+                    "correctness_reward": 0.0,
+                    "reasoning_score": 0.0,
+                    "complexity_score": 0,
+                    "predicted_complexity": "",
+                    "ground_truth_complexity": expected_complexity,
+                    "generated_code": "",
+                    "reasoning_steps": "",
+                    "reward": 0.0,
+                    "error": "Model request failed",
+                }
+            )
+            score = 0.01
+            log_end(success=False, steps=steps_taken, score=score, rewards=task_rewards)
+            return score, task_rewards, steps_taken
+
+        # Parse model response
+        solution_code, reasoning_steps, time_complexity = parse_model_response(
+            model_response
+        )
+
+        if not solution_code:
+            log_step(
+                step=steps_taken,
+                action="PARSE_FAILED",
+                reward=0.0,
+                done=True,
+                error="Could not extract solution code",
+            )
+            task_rewards.append(0.0)
+            task_results.append(
+                {
+                    "task": task_name,
+                    "problem_id": observation.get("problem_id", ""),
+                    "task_id": observation.get("task_id", ""),
+                    "difficulty": observation.get("difficulty", ""),
+                    "correctness_reward": 0.0,
+                    "reasoning_score": 0.0,
+                    "complexity_score": 0,
+                    "predicted_complexity": time_complexity,
+                    "ground_truth_complexity": expected_complexity,
+                    "generated_code": "",
+                    "reasoning_steps": reasoning_steps,
+                    "reward": 0.0,
+                    "error": "Could not extract solution code",
+                }
+            )
+            score = 0.01
+            log_end(success=False, steps=steps_taken, score=score, rewards=task_rewards)
+            return score, task_rewards, steps_taken
+
+        # Step — submit solution via HF Space
+        action = {
+            "solution_code": solution_code,
+            "reasoning_steps": reasoning_steps,
+            "time_complexity": time_complexity,
+        }
+
+        result = env_step(session_id, action)
+        reward = result.get("reward", 0.0) or 0.0
+        obs = result.get("observation", {})
+
+        task_rewards.append(reward)
+
+        # Collect result
+        task_results.append(
+            {
+                "task": task_name,
+                "problem_id": obs.get("problem_id", ""),
+                "task_id": obs.get("task_id", ""),
+                "difficulty": obs.get("difficulty", ""),
+                "correctness_reward": obs.get("correctness_reward", 0.0),
+                "reasoning_score": obs.get("reasoning_score", 0.0),
+                "complexity_score": obs.get("complexity_score", 0),
+                "predicted_complexity": (
+                    obs.get("evaluation", {}).get(
+                        "predicted_complexity", time_complexity
+                    )
+                ),
+                "ground_truth_complexity": obs.get(
+                    "expected_complexity", expected_complexity
+                ),
+                "generated_code": solution_code,
+                "reasoning_steps": reasoning_steps,
+                "reward": reward,
+                "error": obs.get("evaluation", {}).get("compilation_error"),
+            }
+        )
+
+        # Log step
+        action_str = (
+            f"solution=[len={len(solution_code)}] "
+            f"reasoning=[{reasoning_steps[:50]}...] "
+            f"complexity=[{time_complexity}]"
+        )
+        log_step(
+            step=steps_taken,
+            action=action_str,
+            reward=reward,
+            done=True,
+            error=None,
+        )
+
+        score = reward
+        score = min(max(score, 0.01), 0.99)
+        success = score >= SUCCESS_SCORE_THRESHOLD
+
+    except Exception as e:
+        print(f"[DEBUG] Task {task_name} failed: {e}", flush=True)
+        task_rewards.append(0.0)
+        task_results.append(
+            {
+                "task": task_name,
+                "problem_id": "",
+                "task_id": "",
+                "difficulty": "",
+                "correctness_reward": 0.0,
+                "reasoning_score": 0.0,
+                "complexity_score": 0,
+                "predicted_complexity": "",
+                "ground_truth_complexity": "",
+                "generated_code": "",
+                "reasoning_steps": "",
+                "reward": 0.0,
+                "error": str(e)[:200],
+            }
+        )
+        log_step(
+            step=steps_taken,
+            action="EXCEPTION",
+            reward=0.0,
+            done=True,
+            error=str(e)[:200],
+        )
+        score = 0.01
+        success = False
+
+    log_end(success=success, steps=steps_taken, score=score, rewards=task_rewards)
+    return score, task_rewards, steps_taken
+
+
+# ---------------------------------------------------------------------------
 # Main evaluation loop
 # ---------------------------------------------------------------------------
 
 
-def run_inference(num_problems: int = 50, output_path: str = "results.jsonl") -> None:
+def run_inference(output_path: str = "results.jsonl") -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    all_rewards: List[float] = []
     all_results: List[Dict[str, Any]] = []
-    problems_completed = 0
-    total_score = 0.0
-    success = False
-
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+    all_scores: List[float] = []
 
     try:
-        # Iterate through problem IDs sequentially.
-        # Some IDs may not exist in the dataset, so we skip those
-        # and continue until we complete num_problems.
-        problem_id = 1
-        step_counter = 0
-
-        while problems_completed < num_problems:
-            try:
-                # Reset — load specific problem by ID via HF Space
-                session_id, observation = env_reset(problem_id=problem_id)
-            except Exception:
-                # Problem ID doesn't exist in dataset — skip it
-                problem_id += 1
-                continue
-
-            step_counter += 1
-
-            try:
-                problem_desc = observation.get("problem_description", "")
-                starter_code = observation.get("starter_code", "")
-                expected_complexity = observation.get("expected_complexity", "")
-
-                # Build prompt and get model response
-                prompt = build_prompt(
-                    problem_desc=problem_desc,
-                    starter_code=starter_code,
-                    expected_complexity=expected_complexity,
-                )
-
-                model_response = get_model_response(client, MODEL_NAME, prompt)
-
-                if not model_response:
-                    log_step(
-                        step=step_counter,
-                        action="MODEL_FAILED",
-                        reward=0.0,
-                        done=True,
-                        error="Model request failed",
-                    )
-                    all_rewards.append(0.0)
-                    all_results.append(
-                        {
-                            "problem_id": observation.get("problem_id", problem_id),
-                            "task_id": observation.get("task_id", ""),
-                            "difficulty": observation.get("difficulty", ""),
-                            "correctness_reward": 0.0,
-                            "reasoning_score": 0.0,
-                            "complexity_score": 0,
-                            "predicted_complexity": "",
-                            "ground_truth_complexity": expected_complexity,
-                            "generated_code": "",
-                            "reasoning_steps": "",
-                            "reward": 0.0,
-                            "error": "Model request failed",
-                        }
-                    )
-                    problems_completed += 1
-                    problem_id += 1
-                    continue
-
-                # Parse model response
-                solution_code, reasoning_steps, time_complexity = parse_model_response(
-                    model_response
-                )
-
-                if not solution_code:
-                    log_step(
-                        step=step_counter,
-                        action="PARSE_FAILED",
-                        reward=0.0,
-                        done=True,
-                        error="Could not extract solution code",
-                    )
-                    all_rewards.append(0.0)
-                    all_results.append(
-                        {
-                            "problem_id": observation.get("problem_id", problem_id),
-                            "task_id": observation.get("task_id", ""),
-                            "difficulty": observation.get("difficulty", ""),
-                            "correctness_reward": 0.0,
-                            "reasoning_score": 0.0,
-                            "complexity_score": 0,
-                            "predicted_complexity": time_complexity,
-                            "ground_truth_complexity": expected_complexity,
-                            "generated_code": "",
-                            "reasoning_steps": reasoning_steps,
-                            "reward": 0.0,
-                            "error": "Could not extract solution code",
-                        }
-                    )
-                    problems_completed += 1
-                    problem_id += 1
-                    continue
-
-                # Step — submit solution via HF Space
-                action = {
-                    "solution_code": solution_code,
-                    "reasoning_steps": reasoning_steps,
-                    "time_complexity": time_complexity,
-                }
-
-                result = env_step(session_id, action)
-                reward = result.get("reward", 0.0) or 0.0
-                obs = result.get("observation", {})
-
-                all_rewards.append(reward)
-                problems_completed += 1
-
-                # Collect result for results.jsonl
-                all_results.append(
-                    {
-                        "problem_id": obs.get("problem_id", problem_id),
-                        "task_id": obs.get("task_id", ""),
-                        "difficulty": obs.get("difficulty", ""),
-                        "correctness_reward": obs.get("correctness_reward", 0.0),
-                        "reasoning_score": obs.get("reasoning_score", 0.0),
-                        "complexity_score": obs.get("complexity_score", 0),
-                        "predicted_complexity": (
-                            obs.get("evaluation", {}).get(
-                                "predicted_complexity", time_complexity
-                            )
-                        ),
-                        "ground_truth_complexity": obs.get(
-                            "expected_complexity", expected_complexity
-                        ),
-                        "generated_code": solution_code,
-                        "reasoning_steps": reasoning_steps,
-                        "reward": reward,
-                        "error": obs.get("evaluation", {}).get("compilation_error"),
-                    }
-                )
-
-                # Log step
-                action_str = (
-                    f"solution=[len={len(solution_code)}] "
-                    f"reasoning=[{reasoning_steps[:50]}...] "
-                    f"complexity=[{time_complexity}]"
-                )
-                log_step(
-                    step=step_counter,
-                    action=action_str,
-                    reward=reward,
-                    done=True,
-                    error=None,
-                )
-                problem_id += 1
-
-            except Exception as e:
-                print(f"[DEBUG] Problem {problem_id} failed: {e}", flush=True)
-                all_rewards.append(0.0)
-                problems_completed += 1
-                all_results.append(
-                    {
-                        "problem_id": problem_id,
-                        "task_id": "",
-                        "difficulty": "",
-                        "correctness_reward": 0.0,
-                        "reasoning_score": 0.0,
-                        "complexity_score": 0,
-                        "predicted_complexity": "",
-                        "ground_truth_complexity": "",
-                        "generated_code": "",
-                        "reasoning_steps": "",
-                        "reward": 0.0,
-                        "error": str(e)[:200],
-                    }
-                )
-                log_step(
-                    step=step_counter,
-                    action="EXCEPTION",
-                    reward=0.0,
-                    done=True,
-                    error=str(e)[:200],
-                )
-                problem_id += 1
-
-        # Calculate aggregate score
-        if all_rewards:
-            total_score = sum(all_rewards) / len(all_rewards)
-            total_score = min(max(total_score, 0.0), 1.0)
-
-        success = total_score >= SUCCESS_SCORE_THRESHOLD
-
+        for task_name in TASKS:
+            score, _, _ = run_task(
+                client=client,
+                task_name=task_name,
+                output_path=output_path,
+                task_results=all_results,
+            )
+            all_scores.append(score)
     finally:
         # Save results.jsonl
         if all_results:
@@ -473,13 +516,6 @@ def run_inference(num_problems: int = 50, output_path: str = "results.jsonl") ->
                     json.dump(result, f)
                     f.write("\n")
             print(f"\nSaved {len(all_results)} results to {output_path}", flush=True)
-
-        log_end(
-            success=success,
-            steps=problems_completed,
-            score=total_score,
-            rewards=all_rewards,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -491,24 +527,6 @@ if __name__ == "__main__":
         description="Baseline inference for Algo Reasoning Env"
     )
     parser.add_argument(
-        "--api-url",
-        type=str,
-        default=None,
-        help="API base URL (overrides API_BASE_URL env var)",
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=None,
-        help="Model name (overrides MODEL_NAME env var)",
-    )
-    parser.add_argument(
-        "--num-problems",
-        type=int,
-        default=50,
-        help="Number of problems to evaluate (default: 200)",
-    )
-    parser.add_argument(
         "--output",
         type=str,
         default="results.jsonl",
@@ -516,9 +534,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    if args.api_url:
-        API_BASE_URL = args.api_url
-    if args.model:
-        MODEL_NAME = args.model
-
-    run_inference(num_problems=args.num_problems, output_path=args.output)
+    run_inference(output_path=args.output)

@@ -2,7 +2,7 @@
 Centralized configuration for the Rust dataset pipeline.
 
 This module contains all configuration settings including:
-- API configuration (Lightning AI)
+- API configuration (HuggingFace)
 - Model settings
 - Timeout configurations
 """
@@ -15,31 +15,31 @@ from pathlib import Path
 # API Configuration
 # =============================================================================
 
-LIGHTNING_BASE_URL = "https://lightning.ai/api/v1/"
-"""Base URL for Lightning AI API."""
+HF_BASE_URL = "https://router.huggingface.co/v1"
+"""Base URL for HuggingFace Inference API."""
 
-LLM_MODEL = "lightning-ai/nvidia-nemotron-3-super-120b-a12b"
+LLM_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 """Model to use for code generation."""
 
-JUDGE_MODEL = "lightning-ai/gpt-oss-20b"
+JUDGE_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 """Model to use for LLM-as-judge evaluation."""
 
 
 def get_api_key() -> str:
     """
-    Get Lightning AI API key from environment variable.
+    Get API key from environment variable.
 
     Returns:
         The API key string.
 
     Raises:
-        ValueError: If LIGHTNING_API_KEY environment variable is not set.
+        ValueError: If HF_TOKEN or API_KEY environment variable is not set.
     """
-    api_key = os.getenv("LIGHTNING_API_KEY")
+    api_key = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
     if not api_key:
         raise ValueError(
-            "LIGHTNING_API_KEY environment variable not set. "
-            "Please set it via: export LIGHTNING_API_KEY=your_key"
+            "HF_TOKEN or API_KEY environment variable not set. "
+            "Please set it via: export HF_TOKEN=your_key"
         )
     return api_key
 
