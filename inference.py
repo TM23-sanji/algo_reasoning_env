@@ -148,6 +148,30 @@ def get_model_response(client: OpenAI, model: str, prompt: str) -> Optional[str]
         return None
 
 
+def _extract_impl_block(text: str, start: int) -> str:
+    """
+    Extract a full ``impl Solution { ... }`` block from *text* starting
+    at position *start*.  Handles nested braces by tracking depth.
+
+    Returns the extracted block including the outer ``impl Solution { ... }``,
+    or an empty string if the braces never balance.
+    """
+    # Find the opening { after "impl Solution"
+    open_brace = text.find("{", start)
+    if open_brace == -1:
+        return ""
+
+    depth = 0
+    for i in range(open_brace, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return ""
+
+
 def parse_model_response(response: str) -> Tuple[str, str, str]:
     """
     Parse the model response to extract solution, reasoning, and complexity.
@@ -159,10 +183,16 @@ def parse_model_response(response: str) -> Tuple[str, str, str]:
     reasoning_steps = ""
     time_complexity = ""
 
-    # Extract code block
+    # Try fenced code block first (```rust ... ```)
     code_match = re.search(r"```rust\n(.*?)\n```", response, re.DOTALL)
     if code_match:
-        solution_code = code_match.group(1)
+        solution_code = code_match.group(1).strip()
+
+    # Fallback: find `impl Solution {` and extract via brace counting
+    if not solution_code:
+        impl_match = re.search(r"impl\s+Solution\s*\{", response)
+        if impl_match:
+            solution_code = _extract_impl_block(response, impl_match.start())
 
     # Extract reasoning
     reasoning_match = re.search(
